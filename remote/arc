@@ -51,7 +51,7 @@ cmd_alloc() {  # arc alloc PARTITION [HH:MM:SS] [CPUS]
   for _ in $(seq 1 120); do
     IFS='|' read -r state node reason <<<"$(squeue -j "$id" -h -o "%T|%N|%R")"
     case "$state" in
-      RUNNING) echo "READY  node=$node  → connect with Remote-SSH host 'arc-node'"; return 0 ;;
+      RUNNING) echo "READY  node=$node  -> connect with Remote-SSH host 'arc-node'"; return 0 ;;
       "")      die "job $id disappeared; see $LOGDIR" ;;
       *)       printf '\r  %s (%s)   ' "$state" "$reason" ;;
     esac
@@ -96,7 +96,7 @@ cmd_storage() {
   df -hP "$VAULT" 2>/dev/null || echo "  vault not mounted here (check path / node)"
 }
 
-cmd_purge() {  # list /work files not accessed in N days (default 25 → 5-day warning)
+cmd_purge() {  # list /work files not accessed in N days (default 25 -> 5-day warning)
   local days="${1:-25}"
   echo "Files in $WORK not accessed for >$days days (purge window is 30):"
   find "$WORK" -xdev -type f -atime +"$days" -printf '%AY-%Am-%Ad  %10s  %p\n' 2>/dev/null \
@@ -104,20 +104,20 @@ cmd_purge() {  # list /work files not accessed in N days (default 25 → 5-day w
   echo "— full list: ~/.arc/purge-candidates.txt  (archive what you need: arc archive PATH)"
 }
 
-cmd_archive() {  # arc archive /work/$USER/some/path  → $VAULT/from-work/some/path
+cmd_archive() {  # arc archive /work/$USER/some/path  -> $VAULT/from-work/some/path
   local src="${1:?usage: arc archive PATH}"; src=$(realpath "$src")
   local rel="${src#"$WORK"/}"; [ "$rel" = "$src" ] && rel=$(basename "$src")
   local dest="$VAULT/from-work/$(dirname "$rel")"
   mkdir -p "$dest"
   rsync -ah --info=progress2 "$src" "$dest/"
-  echo "Archived → $dest/$(basename "$src")  (source kept)"
+  echo "Archived -> $dest/$(basename "$src")  (source kept)"
 }
 
 cmd_stage() {  # copy from home/vault into /work for job I/O
   local src="${1:?usage: arc stage PATH}"; src=$(realpath "$src")
   local dest="$WORK/staged"; mkdir -p "$dest"
   rsync -ah --info=progress2 "$src" "$dest/"
-  echo "Staged → $dest/$(basename "$src")"
+  echo "Staged -> $dest/$(basename "$src")"
 }
 
 case "${1:-help}" in
