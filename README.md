@@ -1,4 +1,4 @@
-# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.4.1
+# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.4.2
 
 Reference configuration for developing on UTSA **Arc** from VS Code: selecting and holding a compute node, seeing node availability, managing your Slurm jobs, and moving files between the three storage tiers.
 
@@ -209,6 +209,12 @@ It then proposes, for your review:
 - a separate `remote.SSH.serverInstallPath` for `arc-node`, so the login and node windows don't share `~/.vscode-server` on Lustre at the same time
 
 **Vault location.** The vault may not be named after your ID. UTSA's training shows named folders under `/vault/research`. **Arc: Find Vault Folder** lists folders there that you own or can write to and saves your choice to `arc.storage`. If there are none, your vault may not be provisioned yet; request it through support.utsa.edu/myportal.
+
+### Hidden connection terminals (v0.4.2)
+
+Remote-SSH normally shows an "install" and an "SSH Tunnel" terminal per connection, each warning not to close it. With `remote.SSH.useLocalServer: true` and `remote.SSH.showLoginTerminal: false`, the connection runs in a hidden background helper instead.
+
+DUO no longer needs a visible terminal because it is answered once in **Arc: Sign In**. A key passphrase, if needed, is asked for in an input box.
 
 ### One window (v0.4.0)
 

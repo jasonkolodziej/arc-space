@@ -174,6 +174,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   void S.refreshSetupContext();
   void poll();
   void S.maybePromptWorkspaceReview();
+  void S.maybePromptUserReview();
   if (!utsaId() && !ctx.globalState.get('arc.walkthroughShown')) {
     void ctx.globalState.update('arc.walkthroughShown', true);
     void vscode.commands.executeCommand('workbench.action.openWalkthrough', 'local.arc-slurm#arc.setup', false);

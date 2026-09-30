@@ -529,3 +529,19 @@ export async function checkNodeEnv() {
     if (a === 'Open on node') await vscode.commands.executeCommand('arc.connectNode');
   }
 }
+
+
+/** One-time, non-modal offer when the user-settings template changes. Never applies anything by itself. */
+export async function maybePromptUserReview() {
+  if (!utsaId()) return;
+  const b = ctx.globalState.get<Baseline>(S.userBaseline);
+  if (b && b.version >= USER_TEMPLATE_VERSION) return;
+  const key = `arc.dismissedUserTemplate.${USER_TEMPLATE_VERSION}`;
+  if (ctx.globalState.get(key)) return;
+  const changes = planMerge(userSettings(loginHost(), nodeHost()), b, vscode.ConfigurationTarget.Global);
+  if (!changes.length) { await ctx.globalState.update(S.userBaseline, { version: USER_TEMPLATE_VERSION, values: userSettings(loginHost(), nodeHost()) }); return; }
+  const a = await vscode.window.showInformationMessage(
+    'Arc: Remote-SSH can now run hidden (no "install" / "SSH Tunnel" terminals). Review the setting changes?', 'Review', 'Not now', "Don't ask again");
+  if (a === 'Review') await applyUserSettings();
+  if (a === "Don't ask again") await ctx.globalState.update(key, true);
+}

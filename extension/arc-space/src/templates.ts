@@ -7,14 +7,16 @@
 
 /** Bump when workspaceSettings() changes. Open Arc workspaces are offered a review. */
 export const WS_TEMPLATE_VERSION = 2;
-export const USER_TEMPLATE_VERSION = 2;
+export const USER_TEMPLATE_VERSION = 3;
 
 /** Local User settings (this Mac). */
 export function userSettings(login: string, node: string): Record<string, unknown> {
   return {
-    'remote.SSH.showLoginTerminal': true,          // DUO prompts show here
+    // DUO is answered once in "Arc: Sign In"; Remote-SSH then rides the master connection, so its
+    // connection terminals ("install", "SSH Tunnel") can stay hidden. Passphrases still get an input box.
+    'remote.SSH.showLoginTerminal': false,
     'remote.SSH.connectTimeout': 90,
-    'remote.SSH.useLocalServer': true,
+    'remote.SSH.useLocalServer': true,             // run ssh in a background helper, not in visible terminals
     'remote.SSH.remotePlatform': { [login]: 'linux', [node]: 'linux' },
     'remote.SSH.remoteServerListenOnSocket': true, // login nodes are multi-user
     'remote.SSH.defaultExtensions': ['ms-python.python', 'ms-toolsai.jupyter', 'timonwong.shellcheck'],
