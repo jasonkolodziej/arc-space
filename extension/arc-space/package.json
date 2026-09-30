@@ -5,6 +5,7 @@
   "version": "0.3.0",
   "publisher": "local",
   "license": "MIT",
+  "icon": "media/arc.png",
   "engines": {
     "vscode": "^1.138.0"
   },
