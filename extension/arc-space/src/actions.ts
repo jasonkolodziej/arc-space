@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import {
-  cfg, rr, runRemote, q, errMsg, utsaId, holdName, nodeHost, arcTerminal, arcUri, onArc, windowHost, sleep,
+  cfg, rr, runRemote, q, errMsg, utsaId, holdName, nodeHost, arcTerminal, loginTerminal, arcUri, onArc, windowHost, sleep,
 } from './transport';
 import { getPartitions, getJobs, gpuGres, Partition, Job, submitHolder, scontrolField } from './slurm';
 import { ensureSignedIn, workspacePath } from './setup';
@@ -59,7 +59,11 @@ export async function gpuGuard(p: Partition, interactive: boolean): Promise<bool
 
 // ─────────────── allocation ───────────────
 
-export async function allocate(o: { partition?: string; walltime?: string; report?: Report; token?: vscode.CancellationToken } = {}) {
+let memo: vscode.Memento | undefined;
+export const setMemento = (m: vscode.Memento) => { memo = m; };
+interface LastAlloc { partition: string; walltime: string; }
+
+export async function allocate(o: { partition?: string; walltime?: string; report?: Report; token?: vscode.CancellationToken; afterReady?: 'ask' | 'none' } = {}): Promise<string | undefined> {
   if (!(await guard())) return;
   const report = o.report ?? (() => undefined);
   const hold = holdName();
@@ -67,7 +71,7 @@ export async function allocate(o: { partition?: string; walltime?: string; repor
   if (existing) {
     const a = await vscode.window.showWarningMessage(
       `A '${hold}' job already exists (${existing.id}, ${existing.state}).`, 'Open on node', 'Replace it', 'Cancel');
-    if (a === 'Open on node') return connectNode();
+    if (a === 'Open on node') { await connectNode(); return; }
     if (a !== 'Replace it') return;
     await rr('scancel', [existing.id]);
     report(`cancelled previous holder ${existing.id}`);
@@ -79,6 +83,7 @@ export async function allocate(o: { partition?: string; walltime?: string; repor
   const gpu = cfg().get<boolean>('requestGpuGres', true) ? gpuGres(p.gres) : undefined;
 
   const id = await submitHolder({ name: hold, p, time, gpu });
+  await memo?.update('arc.lastAlloc', { partition: p.name, walltime: time } as LastAlloc);
   report(`submitted holder job ${id}: ${p.name}, ${time}, ${p.cpus} cores${gpu ? ', ' + gpu : ''}`);
   refreshAll();
 
@@ -101,15 +106,53 @@ export async function allocate(o: { partition?: string; walltime?: string; repor
   refreshAll();
   if (!node) { report(`job ${id} is still queued; the status bar updates when it starts`); return; }
   report(`READY: ${node}`);
+  if (o.afterReady === 'none') return node;
 
   const canSsh = cfg().get<boolean | null>('nodeSshAvailable', null) !== false;
   const a = await vscode.window.showInformationMessage(`Node ${node} is ready (job ${id}, ${time}).`,
     ...(canSsh ? ['Open VS Code on node'] : []), 'Attach shell');
   if (a === 'Open VS Code on node') await connectNode();
   if (a === 'Attach shell') attachShell(id);
+  return node;
 }
 
-export async function connectNode() {
+/**
+ * One window, one command: sign in → reuse or allocate your node → reopen THIS window on it.
+ * The Arc views, monitor and vault actions keep working after the reload because the
+ * extension runs on your Mac and reaches Arc over the multiplexed SSH connection.
+ */
+export async function startSession() {
+  if (!(await guard())) return;
+  const hold = holdName();
+  const holder = (await getJobs()).find(j => j.name === hold);
+
+  if (holder?.state === 'PENDING') {
+    const ok = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
+      title: `Arc: your node request ${holder.id} is queued (${holder.where})…` },
+      async (_p, tok) => { for (let i = 0; i < 360 && !tok.isCancellationRequested; i++) {
+        const st = (await rr('squeue', ['-h', '-j', holder.id, '-o', '%T']).catch(() => '')).trim();
+        if (st === 'RUNNING') return true; if (!st) return false; await sleep(5000); } return false; });
+    if (!ok) return;
+  } else if (!holder) {
+    const last = memo?.get<LastAlloc>('arc.lastAlloc');
+    let preset: LastAlloc | undefined;
+    if (last) {
+      const parts = await getPartitions().catch(() => []);
+      const idle = parts.find(p => p.name === last.partition)?.states.get('idle') ?? 0;
+      const pick = await vscode.window.showQuickPick([
+        { label: `$(history) ${last.partition} · ${last.walltime}`, description: `${idle} idle now`, detail: 'Same as last time', v: last },
+        { label: '$(list-selection) Choose partition and walltime…', v: undefined },
+      ], { title: 'Arc: start a compute-node session', ignoreFocusOut: true });
+      if (!pick) return;
+      preset = pick.v;
+    }
+    const node = await allocate({ partition: preset?.partition, walltime: preset?.walltime, afterReady: 'none' });
+    if (!node) return;
+  }
+  await connectNode(true);
+}
+
+export async function connectNode(sameWindow?: boolean) {
   if (!(await guard())) return;
   if (cfg().get<boolean | null>('nodeSshAvailable', null) === false) {
     const a = await vscode.window.showWarningMessage(
@@ -120,12 +163,19 @@ export async function connectNode() {
   }
   const holder = (await getJobs()).find(j => j.name === holdName() && j.state === 'RUNNING');
   if (!holder) { const a = await vscode.window.showWarningMessage('No running holder job.', 'Allocate'); if (a) await allocate(); return; }
-  const wf = vscode.workspace.workspaceFile;
-  const target = onArc() && wf && wf.scheme === 'vscode-remote' ? wf.path
-    : onArc() && vscode.workspace.workspaceFolders?.[0] ? vscode.workspace.workspaceFolders[0].uri.path
-    : workspacePath();
+  // Compute nodes get their own workspace (no vault folder). Check it exists before opening.
+  const nodeWs = workspacePath(true);
+  const exists = (await runRemote(`test -f ${q(nodeWs)} && echo 1 || echo 0`)).trim() === '1';
+  let target = nodeWs;
+  if (!exists) {
+    const a = await vscode.window.showWarningMessage(`${nodeWs} doesn't exist yet.`, 'Create it (Prepare Arc)', 'Open home folder instead');
+    if (a === 'Create it (Prepare Arc)') { await vscode.commands.executeCommand('arc.setup.remote'); }
+    else if (a === 'Open home folder instead') { target = `/home/${utsaId()}`; }
+    else return;
+  }
   await vscode.commands.executeCommand('vscode.openFolder',
-    vscode.Uri.parse(`vscode-remote://ssh-remote+${nodeHost()}${target}`), { forceNewWindow: true });
+    vscode.Uri.parse(`vscode-remote://ssh-remote+${nodeHost()}${target}`),
+    { forceNewWindow: !(sameWindow ?? cfg().get<string>('openNodeIn', 'sameWindow') === 'sameWindow') });
 }
 
 export async function releaseNode() {
@@ -301,14 +351,22 @@ export async function purgeScan(arg: unknown) {
   await showText('/work purge candidates', text);
 }
 
+const loginOnly = (p: string) => p.startsWith('/vault/');
+
 export function storageTerminal(arg: unknown) {
   const s = (arg as { data?: StorageDef })?.data;
-  if (s) arcTerminal(`arc:${s.label}`, `cd ${q(s.path)} && exec bash -l`);
+  if (!s) return;
+  const script = `cd ${q(s.path)} && exec bash -l`;
+  if (loginOnly(s.path)) void loginTerminal(`arc:${s.label} (login)`, script); else arcTerminal(`arc:${s.label}`, script);
 }
 
 export function storageAdd(arg: unknown) {
   const s = (arg as { data?: StorageDef })?.data;
   if (!s) return;
+  if (loginOnly(s.path) && windowHost() === 'node') {
+    vscode.window.showWarningMessage('The vault is mounted on the login nodes only, so it can\'t be a folder in a compute-node window. Use the login window, or Archive to Vault from /work.');
+    return;
+  }
   const u = arcUri(s.path);
   if (!u) { vscode.window.showWarningMessage('Adding Arc folders works from an Arc window. Use "Arc: Open Arc Workspace".'); return; }
   vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length ?? 0, 0, { uri: u, name: s.label });
@@ -319,7 +377,11 @@ const workRoot = () => (storageDefs().find(d => d.purge) ?? storageDefs().find(d
 
 async function rsyncTo(src: string, destDir: string, verb: string) {
   const ok = await vscode.window.showInformationMessage(`${verb}\n${src}\n→ ${destDir}/\n\n(rsync copy; the source is kept)`, { modal: true }, 'Copy');
-  if (ok) arcTerminal(`arc ${verb.toLowerCase()}`, `mkdir -p ${q(destDir)} && rsync -ah --info=progress2 ${q(src)} ${q(destDir)}/ && echo "done: ${destDir}"`);
+  if (!ok) return;
+  const script = `mkdir -p ${q(destDir)} && rsync -ah --info=progress2 ${q(src)} ${q(destDir)}/ && echo "done: ${destDir}"`;
+  // Anything touching /vault must run where /vault is mounted: the login node.
+  if (loginOnly(src) || loginOnly(destDir)) await loginTerminal(`arc ${verb.toLowerCase()} (login)`, script);
+  else arcTerminal(`arc ${verb.toLowerCase()}`, script);
 }
 export async function archiveToVault(uri: vscode.Uri) {
   const src = arcPathOf(uri), v = vaultRoot(), w = workRoot();

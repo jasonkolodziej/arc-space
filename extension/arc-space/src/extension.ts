@@ -80,6 +80,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   partView = new Provider(partitionItems);
   storageView = new Provider(storageItems);
   A.setRefreshHook(refreshAll);
+  A.setMemento(ctx.globalState);
 
   ctx.subscriptions.push(
     out, status,
@@ -119,7 +120,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   reg('arc.refresh', refreshAll);
   reg('arc.allocate', () => A.allocate());
   reg('arc.allocateOn', (a: { data?: { name: string } }) => A.allocate({ partition: a?.data?.name }));
-  reg('arc.connectNode', A.connectNode);
+  reg('arc.connectNode', () => A.connectNode());
+  reg('arc.startSession', A.startSession);
   reg('arc.releaseNode', A.releaseNode);
   reg('arc.interactiveShell', A.interactiveShell);
   reg('arc.submitBatch', A.submitBatch);

@@ -8,7 +8,7 @@ import {
 } from './transport';
 import {
   includeBlock, withIncludeBlock, managedConf, proxyScript, SSH_BEGIN, SSH_END, MANAGED_CONF, PROXY_SCRIPT,
-  userSettings, workspaceSettings, workspaceFile, USER_TEMPLATE_VERSION, WS_TEMPLATE_VERSION,
+  userSettings, workspaceSettings, workspaceFile, USER_TEMPLATE_VERSION, WS_TEMPLATE_VERSION, WS_LOGIN, WS_NODE,
 } from './templates';
 import { reviewAndApply, planMerge, Baseline } from './merge';
 import { getPartitions } from './slurm';
@@ -192,7 +192,8 @@ export async function prepareRemote(): Promise<boolean> {
   const probe = await runRemote(
     `mkdir -p ~/projects ~/.arc/logs /work/$USER/.cache/{pip,uv,huggingface,torch,conda-pkgs} && ` +
     `echo "vault=$(test -d /vault/research/$USER && echo 1 || echo 0)"; ` +
-    `echo "ws=$(test -e ~/.arc/arc.code-workspace && echo 1 || echo 0)"; ` +
+    `echo "ws=$(test -e ~/.arc/${WS_LOGIN} && echo 1 || echo 0)"; ` +
+    `echo "wsnode=$(test -e ~/.arc/${WS_NODE} && echo 1 || echo 0)"; ` +
     `echo "lfs=$(command -v lfs >/dev/null && echo 1 || echo 0)"`);
   const kv = Object.fromEntries(probe.trim().split('\n').map(l => l.split('=')));
   const notes: string[] = [];
@@ -201,12 +202,10 @@ export async function prepareRemote(): Promise<boolean> {
   if (kv.vault !== '1' && vaultPath && !vaultPath.endsWith(`/${id}`)) {
     kv.vault = (await runRemote(`test -d ${q(vaultPath)} && echo 1 || echo 0`)).trim();
   }
-  if (kv.ws === '1') {
-    notes.push('~/.arc/arc.code-workspace already exists — left untouched (use "Arc: Review Workspace Settings" inside it).');
-  } else {
-    await runRemote('cat > ~/.arc/arc.code-workspace', { stdin: workspaceFile(id, kv.vault === '1', vaultPath || undefined) });
-    notes.push('Created ~/.arc/arc.code-workspace.');
-  }
+  if (kv.ws === '1') notes.push(`~/.arc/${WS_LOGIN} already exists — left untouched.`);
+  else { await runRemote(`cat > ~/.arc/${WS_LOGIN}`, { stdin: workspaceFile(id, kv.vault === '1', vaultPath || undefined) }); notes.push(`Created ~/.arc/${WS_LOGIN} (login node).`); }
+  if (kv.wsnode === '1') notes.push(`~/.arc/${WS_NODE} already exists — left untouched.`);
+  else { await runRemote(`cat > ~/.arc/${WS_NODE}`, { stdin: workspaceFile(id, false, undefined, true) }); notes.push(`Created ~/.arc/${WS_NODE} (compute nodes, no vault).`); }
   if (kv.vault !== '1') notes.push('⚠ No vault folder found — omitted from the workspace. Run "Arc: Find Vault Folder".');
   if (kv.lfs !== '1') notes.push('⚠ lfs not on PATH — storage view falls back to df.');
   await ctx.globalState.update(S.remotePrepared, id);
@@ -425,13 +424,13 @@ export async function diagnoseNode() {
 
 // ─────────────── 7. Workspace ───────────────
 
-export const workspacePath = () => `/home/${utsaId()}/.arc/arc.code-workspace`;
+export const workspacePath = (onNode = false) => `/home/${utsaId()}/.arc/${onNode ? WS_NODE : WS_LOGIN}`;
 
 export async function openWorkspace(onNode = false) {
   if (!utsaId()) throw new Error('Run setup first.');
   const host = onNode ? nodeHost() : loginHost();
   await vscode.commands.executeCommand('vscode.openFolder',
-    vscode.Uri.parse(`vscode-remote://ssh-remote+${host}${workspacePath()}`), { forceNewWindow: !onArc() || onNode });
+    vscode.Uri.parse(`vscode-remote://ssh-remote+${host}${workspacePath(onNode)}`), { forceNewWindow: !onArc() || onNode });
 }
 
 export async function reviewWorkspaceSettings(silentIfCurrent = false): Promise<void> {

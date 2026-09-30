@@ -131,26 +131,25 @@ export async function statusFor(status: vscode.StatusBarItem, jobs: Job[] | unde
     status.command = { command: 'arc.jobDetails', title: 'Details', arguments: [{ data: holder }] };
     if (leftMinutes(holder.left) < 15 && !warnedLowTime) {
       warnedLowTime = true;
-      vscode.window.showWarningMessage(`Arc: your node's job ends in ${holder.left}. Save your work.`);
+      vscode.window.showWarningMessage(`Arc: your node's job ends in ${holder.left}. Save your work.`, 'Start a new session')
+        .then(a => { if (a) void vscode.commands.executeCommand('arc.startSession'); });
     }
   } else if (w === 'node') {
-    status.text = '$(error) Arc: node job gone'; status.tooltip = 'No running holder job — this window will disconnect.';
-    status.command = 'arc.allocate'; status.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+    status.text = '$(error) Arc: node job ended — start new session'; status.tooltip = 'Your node job ended. Click to allocate a node and reopen this window on it.';
+    status.command = 'arc.startSession'; status.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
   } else if (holder?.state === 'RUNNING') {
     status.text = `$(vm-connect) Arc node ${holder.nodeList} ready`;
-    status.tooltip = 'Click to open this workspace on your allocated compute node';
-    status.command = 'arc.connectNode';
+    status.tooltip = 'Click to reopen this window on your compute node';
+    status.command = 'arc.startSession';
     status.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
   } else if (holder) {
     status.text = `$(watch) Arc: ${holder.state.toLowerCase()} (${holder.where})`;
     status.tooltip = `Holder job ${holder.id} is waiting for a node`;
     status.command = { command: 'arc.jobDetails', title: 'Details', arguments: [{ data: holder }] };
   } else {
-    status.text = w === 'login' ? '$(vm-outline) Arc: login node' : '$(cloud) Arc';
-    status.tooltip = w === 'login'
-      ? 'Login nodes are for editing, transferring and submitting only. Click to allocate a compute node.'
-      : 'Signed in to Arc. Click to allocate a compute node.';
-    status.command = 'arc.allocate';
+    status.text = '$(rocket) Arc: start session';
+    status.tooltip = 'Allocate a compute node and reopen this window on it (one window).';
+    status.command = 'arc.startSession';
   }
   status.show();
 }

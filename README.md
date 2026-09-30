@@ -1,4 +1,4 @@
-# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.3.3
+# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.4.0
 
 Reference configuration for developing on UTSA **Arc** from VS Code: selecting and holding a compute node, seeing node availability, managing your Slurm jobs, and moving files between the three storage tiers.
 
@@ -12,7 +12,7 @@ Sources: [Arc User Guide](https://hpcsupport.utsa.edu/foswiki/bin/view/WebDocume
 |---|---|---|---|---|---|
 | **home** | `/home/abc123` | Yes | 100 GB hard quota | Source code, envs, builds, dotfiles, `~/.vscode-server` | Datasets, checkpoints, caches |
 | **work** | `/work/abc123` | **No** | Files not accessed in 30 days are purge candidates | Job inputs/outputs, logs, datasets, checkpoints, package caches | Anything you can't regenerate |
-| **vault** | `/vault/research/abc123` ¹ | Yes, replicated to UT Arlington | 1 TB (more via service request) | Long-term archive, finished results, raw data of record | Live job I/O |
+| **vault** | `/vault/research/<folder>` ¹ | Yes, replicated to UT Arlington | 1 TB (more via service request) | Long-term archive, finished results, raw data of record | Live job I/O. **Mounted on login nodes only** (not on compute nodes) |
 | **node scratch** | `/scratch` on the node | No | ~1.5 TB per node | Fast staging during a job | Anything that must outlive the job ² |
 
 ¹ The guide writes the path as `vault/research/abc123` and says the storage lives under `/vault`; `setup-on-arc.sh` warns if the directory isn't there.
@@ -209,6 +209,26 @@ It then proposes, for your review:
 - a separate `remote.SSH.serverInstallPath` for `arc-node`, so the login and node windows don't share `~/.vscode-server` on Lustre at the same time
 
 **Vault location.** The vault may not be named after your ID. UTSA's training shows named folders under `/vault/research`. **Arc: Find Vault Folder** lists folders there that you own or can write to and saves your choice to `arc.storage`. If there are none, your vault may not be provisioned yet; request it through support.utsa.edu/myportal.
+
+### One window (v0.4.0)
+
+**Arc: Start Session** (the status bar's rocket) does everything in the current window:
+1. Signs you in.
+2. Reuses your `vscode` node job, waits for it if it's queued, or allocates one (your last partition and walltime are offered first).
+3. Reopens this window on the node's workspace.
+
+You don't need a separate login-node window. The extension runs on your Mac, so views, the job monitor, tasks and vault actions all work from the node window. Near the end of the walltime you're offered **Start a new session**, which reopens the same window on a fresh node, because `arc-node` always resolves to your current job. `arc.openNodeIn: "newWindow"` restores the old behaviour.
+
+### Two workspaces (v0.3.4)
+
+`/vault` is mounted on the login nodes but not on compute nodes (observed on c120), so Prepare Arc now writes two workspace files:
+
+- `~/.arc/arc.code-workspace` for the **login** window: home, work and vault.
+- `~/.arc/arc-node.code-workspace` for **compute-node** windows: home and work.
+
+"Open on node" opens the node workspace and checks it exists first. If it's missing, it offers Prepare Arc or your home folder.
+
+Vault actions (terminal in vault, **Archive to Vault**, **Stage to /work** from vault) always run on the login node through your Mac's master connection, even when started from a node window.
 
 ### Remaining caveats
 - `files.watcherExclude` is documented to accept absolute paths. The `/vault/research/**` entry relies on that.

@@ -2,7 +2,7 @@
   "name": "arc-space",
   "displayName": "Arc Space — HPC Manager",
   "description": "Guided Remote-SSH setup for UTSA Arc (Login, ControlMaster, compute-node hop), partitions/nodes, your Slurm jobs, tasks, and home/work/vault storage.",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/arc-filled.png",
@@ -140,13 +140,13 @@
           },
           {
             "id": "open",
-            "title": "Open the Arc workspace",
-            "description": "Opens ~/.arc/arc.code-workspace on the login node. From there, allocate a node and click the status bar to move onto it.\n[Open workspace](command:arc.openWorkspace)",
+            "title": "Start a session",
+            "description": "One command: sign in, allocate (or reuse) a compute node, and reopen this window on it.\n[Start session](command:arc.startSession)",
             "media": {
               "markdown": "media/walkthrough/open.md"
             },
             "completionEvents": [
-              "onCommand:arc.openWorkspace"
+              "onCommand:arc.startSession"
             ]
           }
         ]
@@ -223,6 +223,12 @@
       }
     ],
     "commands": [
+      {
+        "command": "arc.startSession",
+        "title": "Start Session on Compute Node (this window)",
+        "category": "Arc",
+        "icon": "$(rocket)"
+      },
       {
         "command": "arc.monitor",
         "title": "Open Job Monitor",
@@ -466,6 +472,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "arc.startSession",
+          "when": "view == arc.jobs",
+          "group": "navigation@0"
+        },
         {
           "command": "arc.allocate",
           "when": "view == arc.jobs",
@@ -746,7 +757,7 @@
               "label": "vault",
               "path": "/vault/research/${user}",
               "quotaMount": "",
-              "purpose": "Backed up + replicated to UT Arlington · 1 TB · archive"
+              "purpose": "Backed up + replicated to UT Arlington · 1 TB · archive · mounted on login nodes only"
             }
           ],
           "items": {
@@ -796,6 +807,15 @@
             "bash /dev/tcp relay run on the login node (works when forwarding is prohibited)"
           ],
           "description": "How the arc-node proxy reaches the compute node. Set automatically by verification/diagnosis."
+        },
+        "arc.openNodeIn": {
+          "type": "string",
+          "enum": [
+            "sameWindow",
+            "newWindow"
+          ],
+          "default": "sameWindow",
+          "description": "Where \"Start Session\" / \"Open on node\" opens the compute-node workspace."
         }
       }
     }

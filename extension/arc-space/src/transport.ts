@@ -109,6 +109,13 @@ export function shellFor(script: string): string {
   throw new Error('This window is connected to a non-Arc remote; open a local or Arc window.');
 }
 
+/** A terminal on the LOGIN node from any window (vault is mounted on login nodes only). */
+export async function loginTerminal(name: string, script: string) {
+  if (windowHost() === 'login') return arcTerminal(name, script);
+  // From a local or compute-node window, go through this Mac's DUO-authenticated master connection.
+  return localTerminal(name, `ssh -t ${loginHost()} ${q(`bash -lc ${q(script)}`)}`);
+}
+
 export function arcTerminal(name: string, script: string) {
   const t = vscode.window.createTerminal({ name });
   t.show();
