@@ -1,4 +1,4 @@
-# Arc (UTSA HPC) × VS Code Remote-SSH — Workspace Kit
+# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.2
 
 Reference configuration for developing on UTSA **Arc** from VS Code: selecting and holding a compute node, seeing node availability, managing your Slurm jobs, and moving files between the three storage tiers.
 
@@ -18,7 +18,7 @@ Sources: [Arc User Guide](https://hpcsupport.utsa.edu/foswiki/bin/view/WebDocume
 ¹ The guide writes the path as `vault/research/abc123` and says the storage lives under `/vault`; `setup-on-arc.sh` warns if the directory isn't there.
 ² Treat node-local scratch as job-lifetime; the guide doesn't state a cleanup policy.
 
-Both `/home` (110 TB) and `/work` (1.1 PB) are Lustre. That is why the workspace excludes data directories from file watching and search.
+Both `/home` (110 TB) and `/work` (1.1 PB) are Lustre. That is why the generated workspace keeps data directories out of file watching and search.
 
 **Data flow this kit wires up:** code in *home* → stage inputs into *work* (`Arc: Stage to /work`) → jobs read/write *work* → archive keepers to *vault* (`Arc: Archive to Vault`) before the 30-day window. The `/work` purge scan flags files at 25 days. Archive what matters rather than bulk-touching files to reset access times.
 
@@ -50,71 +50,98 @@ The Arc rules below drive the design.
 
 ---
 
-## 3. Architecture
+## 3. Architecture (v0.2)
 
 ```
- Mac (VS Code UI)
-   │  ssh arc  ──(DUO once; ControlMaster socket persists 10h)──►  login node  ── Window A: "arc"
-   │                                                                  │   edit · sbatch · rsync · Arc views
-   │  ssh arc-node ─ProxyCommand arc-proxy.sh──────────────────────────┤
-   │        1) ssh arc "squeue --name=vscode --states=RUNNING -o %N"  │  (reuses socket, no DUO)
-   │        2) ssh -W <node>:22 arc                                    ▼
-   └──────────────────────────────────────────────────────────►  compute node (your holder job)
-                                                                   Window B: "arc-node"
-                                                                   Python/Jupyter/debug · heavy extensions
+ Mac ─ VS Code + Arc HPC extension (extensionKind "ui": runs HERE, in every window)
+  │
+  │  ssh -fN arc   ← one password + DUO; ControlMaster socket persists ~10 h
+  │  ssh -o BatchMode=yes arc 'squeue …'   ← every view, command and task reuses it (never prompts)
+  ▼
+ login node  ── Remote-SSH window "arc": edit · submit · transfer
+  │
+  │  arc-node = ProxyCommand ~/.ssh/arc-slurm-proxy.sh
+  │    1) ssh arc "squeue --name=vscode --states=RUNNING -o %N"   (same socket)
+  │    2) ssh -W <node>:22 arc                                     (key auth to the node)
+  ▼
+ compute node (your holder job) ── Remote-SSH window "arc-node": run · debug · notebooks
 ```
 
-The **holder job** is `sbatch -J vscode --wrap "sleep infinity"`. It is not tied to a terminal, so closing VS Code or losing Wi-Fi doesn't drop the node, and walltime counts down from submission. Release the node when you're done (`Arc: Release VS Code Node`, or `arc release`).
+**v0.1 → v0.2**
 
-**Where the extension runs:** `extensionKind: ["workspace"]` means it runs inside the VS Code server on Arc and calls `sinfo` / `squeue` / `scontrol` / `sacct` / `lfs` directly. The same views work in both windows.
-
----
-
-## 4. Setup
-
-### On your Mac
-1. Append `local/ssh_config.arc` to `~/.ssh/config` and replace `abc123`.
-2. Copy `local/arc-proxy.sh` to `~/.ssh/arc-proxy.sh` and run `chmod 700` on it.
-3. Merge `local/vscode-user-settings.jsonc` into your **User** `settings.json`. `showLoginTerminal` is what lets you answer DUO.
-4. Put your public key in Arc's `~/.ssh/authorized_keys`. `/home` is shared, so the compute nodes see the same file. DUO still applies at the login node.
-5. Run `ssh arc` once in a terminal and approve DUO. This opens the master socket.
-
-### On Arc (Remote-SSH window on `arc`)
-```bash
-scp -r remote arc:~/arc-kit-remote     # or drag into the Explorer
-bash ~/arc-kit-remote/setup-on-arc.sh  # installs ~/.local/bin/arc and ~/.arc/arc.code-workspace
-```
-Then run **Extensions: Install from VSIX…** and choose `extension/arc-slurm/arc-slurm-0.1.0.vsix`. Remote-SSH installs it on the host. Finally, open `~/.arc/arc.code-workspace`.
-
-### Recommended: two VS Code Profiles
-- **Arc-Login:** Remote-SSH, the Arc extension, ShellCheck. Keep it light because it runs on a shared login node.
-- **Arc-Node:** everything, including Python/Pylance, Jupyter, and debuggers.
-
----
-
-## 5. ⚠️ Verify before relying on it
-
-| Assumption | How to check | If it fails |
+| | v0.1 | v0.2 |
 |---|---|---|
-| You can SSH into a compute node you hold (typical `pam_slurm_adopt` setup) | `arc alloc compute1 00:30:00` → `ssh $(arc node) hostname` from the login node → from Mac: `ssh arc-node hostname` | Use Window A plus **Attach Shell to Job** (`srun --jobid --overlap --pty`) for execution, or ask RCSG whether compute-node SSH or VS Code tunnels are permitted |
-| `srun --overlap` is supported (Slurm ≥ 20.11) | `srun --help \| grep overlap` | Drop `--overlap` in `arc shell` / the extension |
-| GPU GRES name that `sinfo %G` reports is what `--gres` accepts | `sinfo -p gpu1v100 -o %G` | Set `arc.requestGpuGres: false` and add your own flags |
-| `lfs quota` works for users | `lfs quota -h -u $USER /work` | Storage view falls back to `df` (filesystem-level only) |
-| Lustre updates atime reliably enough for the purge scan | Compare `stat` atime after reading a file | Treat the scan as advisory |
+| Where the extension runs | On Arc (`workspace`) | On your Mac (`ui`); reaches Arc over the multiplexed SSH socket |
+| Setup | Manual (copy files, edit configs) | Guided walkthrough plus **Arc: Run Setup**; each step is idempotent |
+| Your ssh config | Hand-edited | One marked `Include` at the top; everything else lives in a managed file |
+| Settings | Written once in the template | Three-way merge with a review list; your edits and removals are respected |
+| Tasks | Static JSON in the workspace file plus an `arc` shell script | `arc` task type contributed by the extension; the shell script and workspace tasks are removed |
+| Unsupported cluster features | Documented caveats | Detected by **Verify**; the extension adapts (e.g. hides "Open on node") |
 
 ---
 
-## 6. What's where
+## 4. Setup: what's automated and what isn't
 
-| Need | Extension (activity bar → Arc HPC) | Task / CLI |
+Install `extension/arc-slurm/arc-slurm-0.2.0.vsix` in a **local** VS Code window. This is **Extensions: Install from VSIX…**, and it also pulls in Remote-SSH. The walkthrough then opens; alternatively, run **Arc: Run Setup**.
+
+| Step | What the extension does | Safeguards |
 |---|---|---|
-| See nodes available | **Partitions & Nodes**: idle/total per partition; expand for per-node state | `Arc: Idle nodes by partition` · `arc idle` · `arc partitions` |
-| Select & hold a compute node | ▶ on a partition, or **Allocate Compute Node** (sorted by idle, walltime validated, GPU warning) | `Arc: Allocate VS Code node` · `arc alloc PART TIME` |
-| Move VS Code onto the node | Status bar **"Arc node … ready"** → opens this workspace on `arc-node` in a new window | Remote-SSH: Connect to Host → `arc-node` |
-| Quick interactive shell (doc-style) | **Interactive Shell (srun --pty)** | `arc interactive PART TIME` |
-| My jobs | **My Jobs**: live every 30 s; header shows usage vs 10 jobs / 20 nodes | `Arc: My jobs` / `Watch my jobs` |
-| Job control | Row actions: details, log, attach shell, efficiency (sacct), cancel, hold/release (pending), requeue (running), cancel all | `Arc: Job details / Follow job log / Cancel / Hold / Release / Requeue` |
-| Submit | Editor title 🚀 on `.sbatch/.slurm`, or Explorer context | `Arc: Submit current batch script` |
-| Notifications | Job started, job left queue (→ Efficiency / Log), <15 min walltime left on the node you're on | — |
-| Storage | **Storage**: purpose, quota/usage, terminal here, add to workspace, purge scan (work) | `Arc: Storage usage` · `arc storage` · `arc purge 25` |
-| Cross-tier moves | Explorer right-click: **Archive to Vault** (under /work), **Stage to /work** (under /home or /vault) | `arc archive PATH` · `arc stage PATH` |
+| 1. Configure SSH | Asks for your myUTSA ID. Puts a marked `Include ~/.ssh/arc-slurm.conf` at the **top** of your ssh config (or of `remote.SSH.configFile` if you set one). Writes the managed conf and proxy script. | Backup `config.arc-backup` on the first change. Re-running replaces the block and never duplicates it. Warns if your own `Host arc` / `arc-node` blocks exist. A trailing `Host *` keeps your global options global. |
+| 2. User settings | Reviews and merges the Remote-SSH settings: DUO login terminal, `remoteServerListenOnSocket` for shared login nodes, `remotePlatform`, and default remote extensions. | Checklist before any write. Values you set differently are unticked conflicts. |
+| 3. Sign in (DUO) | Opens a **local** terminal (even from a remote window) running `ssh -fN arc`, then waits for the socket. | The status bar shows *Arc: sign in* whenever the socket is gone. Calls fail fast and never hang. |
+| 4. SSH key | Uses an existing key, or runs `ssh-keygen` in a local terminal (a passphrase goes into the macOS keychain). Appends the public key to Arc's `authorized_keys`. | Idempotent: an exact-line check means it is never appended twice. |
+| 5. Prepare Arc | Creates `~/projects`, `~/.arc/logs`, and the `/work/<id>/.cache/*` directories. Writes `~/.arc/arc.code-workspace` **only if it doesn't exist**. | Omits the vault folder if the path is missing, and warns when `lfs` is absent. |
+| 6. Verify | Runs a 1-core, 5-minute test job, then checks login→node SSH, **Mac→`arc-node`**, `srun --overlap`, `lfs quota`, the vault path, and GPU GRES. | The test job is always cancelled. Results are written to `arc.nodeSshAvailable` / `arc.srunOverlap`. |
+| 7. Open workspace | Opens `~/.arc/arc.code-workspace` on `arc`. | — |
+
+Still manual: registering for DUO (passphrase.utsa.edu), requesting your Arc account, and approving the DUO push. Windows clients aren't supported, because OpenSSH on Windows lacks ControlMaster.
+
+---
+
+## 5. Settings merge rules
+
+Templates are versioned. Workspace settings record what was last applied in `arc.appliedTemplate`, which is stored in the workspace file, so the login and node windows share it. User settings keep their record in extension state.
+
+| Situation | Result |
+|---|---|
+| Setting absent and never applied | Added (pre-ticked) |
+| Setting absent but applied before | You removed it, so it is left alone |
+| Your value equals what we applied, and the template changed | Updated (pre-ticked) |
+| You changed the value | Conflict: unticked, your value is kept unless you tick it |
+| Object settings (e.g. `files.watcherExclude`) | Merged key by key with the same rules. Keys you deleted stay deleted, and `false` values are respected. |
+| Array settings | New items are appended. Items you removed are not re-added. |
+
+Writes go through the VS Code settings API, so comments and unrelated settings are preserved. Nothing is ever applied silently. An outdated Arc workspace shows a one-time **Review** notification, and **Arc: Review Workspace Settings** runs it on demand.
+
+---
+
+## 6. Tasks (`"type": "arc"`)
+
+**Run Task → arc** lists: partitions, idle nodes, my jobs, watch jobs, allocate, release, interactive shell, submit, submit & follow, follow latest log, storage, and purge scan. Submit tasks only appear in Arc windows, because the script must live on Arc. You can pin parameterized variants in `tasks.json` and bind keys to them:
+
+```jsonc
+{ "label": "Dev node (compute2, 8h)", "type": "arc", "action": "allocate", "partition": "compute2", "walltime": "08:00:00" },
+{ "label": "Submit & follow", "type": "arc", "action": "submitAndFollow", "problemMatcher": "$arc-python-watch" },
+{ "label": "Efficiency of 123456", "type": "arc", "action": "efficiency", "jobId": "123456" }
+```
+
+Streaming tasks run in a real terminal: directly in an Arc window, or via `ssh -t arc` from a local window. The rest run the extension's own logic, so they show the same pickers and warnings as the commands. `$arc-python-watch` turns traceback frames in job logs into clickable Problems entries in Arc windows.
+
+---
+
+## 7. What's where
+
+| Need | Where |
+|---|---|
+| Nodes available | **Partitions & Nodes** (idle/total, expand for per-node state) · task *Idle nodes by partition* |
+| Select & hold a node | ▶ on a partition or **Allocate** (sorted by idle, walltime validated, GPU-idle warning) · task *allocate* |
+| Move VS Code onto the node | Status bar **Arc node … ready** → opens the same workspace on `arc-node` |
+| Jobs | **My Jobs**: live, with usage vs 10 jobs / 20 nodes. Actions: details, open/follow log, attach shell, sacct, cancel, hold/release, requeue, cancel all. Notifications on start/end and at <15 min left on your node. |
+| Submit | 🚀 in the editor title for `.sbatch/.slurm` · Explorer context · tasks |
+| Storage | **Storage**: purpose, quota/usage, terminal here, add to workspace, `/work` purge scan |
+| Cross-tier moves | Explorer right-click in Arc windows: **Archive to Vault** (from /work), **Stage to /work** (from /home or /vault) |
+
+### Remaining caveats
+- `files.watcherExclude` is documented to accept absolute paths. The `/vault/research/**` entry relies on that.
+- Lustre may update atime lazily, so treat the purge scan as advisory. Archive what you need; don't bulk-touch files to reset the clock.
+- If node SSH verification fails, the login window plus **Attach Shell to Job** is the supported path. Ask RCSG before trying workarounds.

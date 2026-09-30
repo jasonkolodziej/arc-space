@@ -1,15 +1,18 @@
 {
   "name": "arc-space",
   "displayName": "Arc HPC (UTSA) — Space manager",
-  "description": "Partitions/nodes, your Slurm jobs, compute-node allocation + Remote-SSH hop, and home/work/vault storage for UTSA Arc.",
-  "version": "0.1.0",
+  "description": "Guided Remote-SSH setup for UTSA Arc (DUO, ControlMaster, compute-node hop), partitions/nodes, your Slurm jobs, tasks, and home/work/vault storage.",
+  "version": "0.2.0",
   "publisher": "local",
   "license": "MIT",
   "engines": {
     "vscode": "^1.138.0"
   },
   "extensionKind": [
-    "workspace"
+    "ui"
+  ],
+  "extensionDependencies": [
+    "ms-vscode-remote.remote-ssh"
   ],
   "categories": [
     "Other"
@@ -21,13 +24,13 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package --no-dependencies --allow-missing-repository"
   },
   "devDependencies": {
-    "@types/node": "^20.19.43",
+    "@types/node": "^26.6.3",
     "@types/vscode": "^1.138.0",
-    "@vscode/vsce": "^3.9.2",
-    "typescript": "^5.9.3"
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^7.0.2"
   },
   "contributes": {
     "viewsContainers": {
@@ -55,7 +58,224 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "arc.jobs",
+        "contents": "Arc isn't set up yet.\n[Run Setup](command:arc.setup.all)\n[Open Walkthrough](command:workbench.action.openWalkthrough?%22local.arc-slurm%23arc.setup%22)",
+        "when": "!arc.setup.ssh"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "arc.setup",
+        "title": "Set up UTSA Arc",
+        "description": "SSH with one DUO prompt, a compute-node hop for VS Code, and a Lustre-friendly workspace.",
+        "steps": [
+          {
+            "id": "ssh",
+            "title": "Configure SSH",
+            "description": "Adds one Include line to the top of your ssh config and writes a managed `~/.ssh/arc-slurm.conf` plus proxy script.\n[Configure SSH](command:arc.setup.ssh)",
+            "media": {
+              "markdown": "media/walkthrough/ssh.md"
+            },
+            "completionEvents": [
+              "onContext:arc.setup.ssh"
+            ]
+          },
+          {
+            "id": "settings",
+            "title": "Apply VS Code user settings",
+            "description": "Reviews and merges the Remote-SSH settings Arc needs (DUO login terminal, socket mode on shared login nodes).\n[Review settings](command:arc.setup.userSettings)",
+            "media": {
+              "markdown": "media/walkthrough/settings.md"
+            },
+            "completionEvents": [
+              "onContext:arc.setup.settings"
+            ]
+          },
+          {
+            "id": "signin",
+            "title": "Sign in (DUO)",
+            "description": "Opens a local terminal for your password + DUO. The connection is reused ~10 h by everything else.\n[Sign in](command:arc.signIn)",
+            "media": {
+              "markdown": "media/walkthrough/signin.md"
+            },
+            "completionEvents": [
+              "onContext:arc.setup.signedIn"
+            ]
+          },
+          {
+            "id": "key",
+            "title": "Install an SSH key",
+            "description": "Needed for the Mac → compute-node hop. Uses an existing key or generates a dedicated one, and adds it to Arc's authorized_keys.\n[Set up key](command:arc.setup.key)",
+            "media": {
+              "markdown": "media/walkthrough/key.md"
+            },
+            "completionEvents": [
+              "onContext:arc.setup.key"
+            ]
+          },
+          {
+            "id": "remote",
+            "title": "Prepare Arc",
+            "description": "Creates ~/projects, /work cache dirs and ~/.arc/arc.code-workspace (never overwrites an existing one).\n[Prepare Arc](command:arc.setup.remote)",
+            "media": {
+              "markdown": "media/walkthrough/remote.md"
+            },
+            "completionEvents": [
+              "onContext:arc.setup.remote"
+            ]
+          },
+          {
+            "id": "verify",
+            "title": "Verify",
+            "description": "Runs a 5-minute test job and checks compute-node SSH, srun --overlap, lfs quota, vault and GPU GRES. Adapts the extension to the results.\n[Verify](command:arc.setup.verify)",
+            "media": {
+              "markdown": "media/walkthrough/verify.md"
+            },
+            "completionEvents": [
+              "onContext:arc.setup.verified"
+            ]
+          },
+          {
+            "id": "open",
+            "title": "Open the Arc workspace",
+            "description": "Opens ~/.arc/arc.code-workspace on the login node. From there, allocate a node and click the status bar to move onto it.\n[Open workspace](command:arc.openWorkspace)",
+            "media": {
+              "markdown": "media/walkthrough/open.md"
+            },
+            "completionEvents": [
+              "onCommand:arc.openWorkspace"
+            ]
+          }
+        ]
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "arc",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "partitions",
+              "idle",
+              "jobs",
+              "watchJobs",
+              "allocate",
+              "release",
+              "interactive",
+              "submit",
+              "submitAndFollow",
+              "followLog",
+              "efficiency",
+              "storage",
+              "purgeScan"
+            ]
+          },
+          "partition": {
+            "type": "string",
+            "description": "Partition for allocate / interactive"
+          },
+          "walltime": {
+            "type": "string",
+            "description": "HH:MM:SS or D-HH:MM:SS"
+          },
+          "jobId": {
+            "type": "string",
+            "description": "Job for followLog / efficiency"
+          },
+          "file": {
+            "type": "string",
+            "description": "Batch script on Arc (default: current file)"
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "arc-python",
+        "owner": "arc",
+        "source": "python",
+        "fileLocation": [
+          "absolute"
+        ],
+        "severity": "error",
+        "pattern": {
+          "regexp": "^\\s*File \"(\\/[^\"]+)\", line (\\d+)(?:, in (.*))?$",
+          "file": 1,
+          "line": 2,
+          "message": 3
+        }
+      },
+      {
+        "name": "arc-python-watch",
+        "base": "$arc-python",
+        "background": {
+          "activeBegins": true,
+          "beginsPattern": "^==> arc: following",
+          "endsPattern": "^==> arc: following"
+        }
+      }
+    ],
     "commands": [
+      {
+        "command": "arc.setup.all",
+        "title": "Run Setup",
+        "category": "Arc",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "arc.setup.ssh",
+        "title": "Configure SSH",
+        "category": "Arc"
+      },
+      {
+        "command": "arc.setup.userSettings",
+        "title": "Review User Settings",
+        "category": "Arc"
+      },
+      {
+        "command": "arc.setup.key",
+        "title": "Set Up SSH Key",
+        "category": "Arc"
+      },
+      {
+        "command": "arc.setup.remote",
+        "title": "Prepare Arc (dirs + workspace file)",
+        "category": "Arc"
+      },
+      {
+        "command": "arc.setup.verify",
+        "title": "Verify Setup (test job)",
+        "category": "Arc",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "arc.signIn",
+        "title": "Sign In (DUO)",
+        "category": "Arc",
+        "icon": "$(key)"
+      },
+      {
+        "command": "arc.signOut",
+        "title": "Sign Out",
+        "category": "Arc"
+      },
+      {
+        "command": "arc.openWorkspace",
+        "title": "Open Arc Workspace (login node)",
+        "category": "Arc",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "arc.reviewWorkspaceSettings",
+        "title": "Review Workspace Settings",
+        "category": "Arc"
+      },
       {
         "command": "arc.refresh",
         "title": "Refresh",
@@ -76,7 +296,7 @@
       },
       {
         "command": "arc.connectNode",
-        "title": "Open This Workspace on Allocated Node",
+        "title": "Open Workspace on Allocated Node",
         "category": "Arc",
         "icon": "$(remote)"
       },
@@ -109,6 +329,12 @@
         "title": "Open Output Log",
         "category": "Arc",
         "icon": "$(output)"
+      },
+      {
+        "command": "arc.jobFollow",
+        "title": "Follow Output Log",
+        "category": "Arc",
+        "icon": "$(eye)"
       },
       {
         "command": "arc.jobShell",
@@ -182,6 +408,28 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "arc.allocateOn",
+          "when": "false"
+        },
+        {
+          "command": "arc.storageTerminal",
+          "when": "false"
+        },
+        {
+          "command": "arc.storageAdd",
+          "when": "false"
+        },
+        {
+          "command": "arc.archiveToVault",
+          "when": "false"
+        },
+        {
+          "command": "arc.stageToWork",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "arc.allocate",
@@ -194,12 +442,28 @@
           "group": "navigation@9"
         },
         {
+          "command": "arc.interactiveShell",
+          "when": "view == arc.jobs"
+        },
+        {
+          "command": "arc.releaseNode",
+          "when": "view == arc.jobs"
+        },
+        {
           "command": "arc.cancelAll",
           "when": "view == arc.jobs"
         },
         {
-          "command": "arc.interactiveShell",
-          "when": "view == arc.jobs"
+          "command": "arc.setup.verify",
+          "when": "view =~ /^arc\\./"
+        },
+        {
+          "command": "arc.setup.all",
+          "when": "view =~ /^arc\\./"
+        },
+        {
+          "command": "arc.signOut",
+          "when": "view =~ /^arc\\./ && arc.setup.signedIn"
         }
       ],
       "view/item/context": [
@@ -212,6 +476,11 @@
           "command": "arc.jobShell",
           "when": "viewItem =~ /^job:running/",
           "group": "inline@2"
+        },
+        {
+          "command": "arc.jobFollow",
+          "when": "viewItem =~ /^job:/",
+          "group": "inline@3"
         },
         {
           "command": "arc.jobCancel",
@@ -245,7 +514,7 @@
         },
         {
           "command": "arc.jobRequeue",
-          "when": "viewItem =~ /^job:(running|completing)/",
+          "when": "viewItem =~ /^job:running/",
           "group": "2_control@3"
         },
         {
@@ -272,24 +541,24 @@
       "explorer/context": [
         {
           "command": "arc.archiveToVault",
-          "when": "resourcePath =~ /^\\/work\\//",
+          "when": "resourceScheme == vscode-remote && resourcePath =~ /^\\/work\\//",
           "group": "7_arc@1"
         },
         {
           "command": "arc.stageToWork",
-          "when": "resourcePath =~ /^\\/(home|vault)\\//",
+          "when": "resourceScheme == vscode-remote && resourcePath =~ /^\\/(home|vault)\\//",
           "group": "7_arc@2"
         },
         {
           "command": "arc.submitBatch",
-          "when": "resourceExtname =~ /^\\.(sbatch|slurm|sh)$/",
+          "when": "resourceScheme == vscode-remote && resourceExtname =~ /^\\.(sbatch|slurm|sh)$/",
           "group": "7_arc@3"
         }
       ],
       "editor/title": [
         {
           "command": "arc.submitBatch",
-          "when": "resourceExtname =~ /^\\.(sbatch|slurm)$/",
+          "when": "resourceScheme == vscode-remote && resourceExtname =~ /^\\.(sbatch|slurm)$/",
           "group": "navigation"
         }
       ]
@@ -297,15 +566,32 @@
     "configuration": {
       "title": "Arc HPC",
       "properties": {
-        "arc.holdJobName": {
+        "arc.utsaId": {
           "type": "string",
-          "default": "vscode",
-          "description": "Slurm job name of the placeholder job that holds your VS Code compute node."
+          "default": "",
+          "scope": "application",
+          "description": "Your myUTSA ID (SSH user on Arc). Set by setup."
+        },
+        "arc.sshLoginHost": {
+          "type": "string",
+          "default": "arc",
+          "scope": "application",
+          "description": "SSH alias for the login node."
         },
         "arc.sshNodeHost": {
           "type": "string",
           "default": "arc-node",
-          "description": "Local ~/.ssh/config Host alias that proxies to the allocated node."
+          "scope": "application",
+          "description": "SSH alias that proxies to your allocated compute node."
+        },
+        "arc.holdJobName": {
+          "type": "string",
+          "default": "vscode",
+          "description": "Job name of the placeholder job that holds your VS Code node. Must match ARC_HOLD_JOB in the proxy (default vscode)."
+        },
+        "arc.defaultPartition": {
+          "type": "string",
+          "default": "compute1"
         },
         "arc.defaultWalltime": {
           "type": "string",
@@ -321,12 +607,19 @@
           "items": {
             "type": "string"
           },
-          "default": []
+          "default": [
+            "softmatter",
+            "dgxa100",
+            "uavlab",
+            "uavlab2",
+            "trustlab"
+          ],
+          "description": "Private partitions you are not authorized for."
         },
         "arc.requestGpuGres": {
           "type": "boolean",
           "default": true,
-          "description": "Add --gres=<partition GPU GRES from sinfo> when allocating on GPU partitions."
+          "description": "Add --gres=<GPU GRES reported by sinfo> on GPU partitions."
         },
         "arc.purgeWarnDays": {
           "type": "number",
@@ -336,6 +629,21 @@
         "arc.notifyOnJobEnd": {
           "type": "boolean",
           "default": true
+        },
+        "arc.nodeSshAvailable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null,
+          "scope": "application",
+          "description": "Set by verification. false disables opening VS Code on compute nodes."
+        },
+        "arc.srunOverlap": {
+          "type": "boolean",
+          "default": true,
+          "scope": "application",
+          "description": "Use srun --overlap when attaching shells (set by verification)."
         },
         "arc.limits": {
           "type": "object",
@@ -351,6 +659,15 @@
               "type": "number"
             }
           }
+        },
+        "arc.appliedTemplate": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "default": null,
+          "scope": "window",
+          "description": "Internal: the Arc workspace template last applied here (used to respect your edits). Don't edit."
         },
         "arc.storage": {
           "type": "array",
@@ -398,6 +715,5 @@
         }
       }
     }
-  },
-  "packageManager": "pnpm@12.8.1+sha512.f64ba907507f5ceafe06c8d38e6052d0179444580ec1279ddd5bfc11cb48aa8a2644b66598e07e761da84872a9fc57d5f902b87fa49d024198d558612aabbe45"
+  }
 }
