@@ -12,7 +12,7 @@ import {
 } from './templates';
 import { reviewAndApply, planMerge, Baseline } from './merge';
 import { getPartitions } from './slurm';
-import { diagnoseHop, HopResult } from './diagnose';
+import { diagnoseHop, HopResult, nodeEnvScript, parseNodeEnv, NodeEnv } from './diagnose';
 
 let ctx: vscode.ExtensionContext;
 export function initSetup(c: vscode.ExtensionContext) { ctx = c; }
@@ -238,6 +238,10 @@ async function remedy(h: HopResult): Promise<boolean> {
         (_p, t) => waitFor(async () => (await spawnP('ssh-add', ['-l'], { timeoutMs: 4000 })).stdout.includes('arc-slurm') ||
           (await spawnP('ssh-add', ['-T', expandHome(key) + '.pub'], { timeoutMs: 4000 })).code === 0, 120_000, t)));
     }
+    case 'rewriteProxy':
+      writeManagedSshFiles();
+      vscode.window.showInformationMessage('Arc: proxy script rewritten from this version.');
+      return true;
     case 'installKey':
     case 'keyMissing': {
       const a = await vscode.window.showInformationMessage('Set up (or re-install) your SSH key for Arc now?', 'Set up key', 'Skip');
@@ -378,6 +382,7 @@ export async function verify(): Promise<boolean> {
         ? '\n\n"Open on node" stays enabled: Remote-SSH will ask for your key passphrase when it connects. Load the key into the agent to skip that prompt.'
         : '\n\nFix the item above, then run "Arc: Diagnose Node Connection" (no need to redo the whole verification).';
   }
+  advice += '\n\nIf Remote-SSH reaches the node but fails with "Got bad result from install script", run "Arc: Check Node for VS Code Server".';
   if (cfg().get('proxyMode') === 'relay') advice += '\n\nNote: the proxy now uses the bash relay because the login node blocks SSH forwarding.';
   const doc = await vscode.workspace.openTextDocument({ content: `Arc verification — ${new Date().toLocaleString()}\n\n${report}${advice}\n` });
   await vscode.window.showTextDocument(doc, { preview: true });
@@ -485,4 +490,45 @@ export async function runFullSetup() {
   }
   const a = await vscode.window.showInformationMessage('Arc setup complete.', 'Open Arc workspace (login node)');
   if (a) await openWorkspace(false);
+}
+
+
+// ─────────────── VS Code server prerequisites on compute nodes ───────────────
+
+/** Runs fn with the node of your running holder job, or a short test job it starts and cancels. */
+async function withNode<T>(fn: (node: string) => Thenable<T> | Promise<T>): Promise<T | undefined> {
+  const held = (await runRemote(`squeue -u $USER --name=${holdName()} --states=RUNNING -h -o %N`)).trim();
+  if (held && !held.includes('[')) return fn(held);
+  const a = await vscode.window.showInformationMessage('No running holder job. Start a 10-minute test job to check a node?', 'Start test job');
+  if (!a) return undefined;
+  const id = (await runRemote(`sbatch --parsable -J arc-verify -p compute1 -t 00:10:00 -N 1 -n 1 -c 1 -o /dev/null --wrap 'sleep 600'`)).trim().split(';')[0];
+  try {
+    let node = '';
+    const ok = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true, title: `Arc: waiting for test job ${id}…` },
+      (_p, t) => waitFor(async () => { const [st, n] = (await runRemote(`squeue -h -j ${id} -o '%T|%N'`)).trim().split('|'); node = n; return st === 'RUNNING'; }, 240_000, t, 4000));
+    return ok ? await fn(node) : undefined;
+  } finally { await runRemote(`scancel ${id}`).catch(() => undefined); }
+}
+
+export async function checkNodeEnv() {
+  if (!(await ensureSignedIn())) return;
+  const env = await withNode<NodeEnv>(node => vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+    title: `Arc: checking VS Code server prerequisites on ${node}…` },
+    async () => parseNodeEnv(node, await runRemote(nodeEnvScript(node), { timeoutMs: 90_000 }), utsaId(), nodeHost())));
+  if (!env) return;
+  const mark = (ok: boolean | undefined) => (ok === undefined ? 'ℹ' : ok ? '✅' : '❌');
+  const body = env.findings.map(x => `${mark(x.ok)}  ${x.name}\n     ${x.detail}`).join('\n\n') +
+    (env.notes.length ? `\n\nWhat to do\n${env.notes.map(n => `  • ${n}`).join('\n')}` : '') +
+    `\n\nProposed Remote-SSH settings (you review each one next):\n${JSON.stringify(env.settings, null, 2)}\n`;
+  const doc = await vscode.workspace.openTextDocument({ content: `Arc node environment — ${env.node} — ${new Date().toLocaleString()}\n\n${body}` });
+  await vscode.window.showTextDocument(doc, { preview: true });
+  const n = await reviewAndApply('Arc: Remote-SSH settings for compute nodes', env.settings,
+    ctx.globalState.get<Baseline>('arc.nodeEnvBaseline'), vscode.ConfigurationTarget.Global,
+    b => ctx.globalState.update('arc.nodeEnvBaseline', b), 1);
+  if (n) {
+    const a = await vscode.window.showInformationMessage(
+      env.noise ? 'Settings applied. Fix the shell start-up output first (see the report), then open the workspace on the node.'
+                : 'Settings applied. Open the workspace on your node now?', ...(env.noise ? [] : ['Open on node']));
+    if (a === 'Open on node') await vscode.commands.executeCommand('arc.connectNode');
+  }
 }

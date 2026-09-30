@@ -138,17 +138,30 @@ export function proxyScript(login: string, holdJob: string, mode: 'forward' | 'r
 # the multiplexed login connection (no second DUO prompt).
 #   forward: ssh -W (needs port forwarding allowed on the login node)
 #   relay:   a bash /dev/tcp relay run on the login node (works when forwarding is prohibited)
+#
+# IMPORTANT: stdin/stdout of this script ARE the SSH connection. Anything that reads stdin
+# (hence "ssh -n" for the lookup) or writes stdout before the final exec corrupts the handshake.
+# Diagnostics therefore go to stderr and to ~/.ssh/arc-slurm-proxy.log.
 JOB_NAME="\${ARC_HOLD_JOB:-${holdJob}}"
 MODE="\${ARC_PROXY_MODE:-${mode}}"
-node=$(ssh -o BatchMode=yes ${login} "squeue -u \\$USER --name=$JOB_NAME --states=RUNNING --noheader --format=%N" 2>/dev/null \\
+LOG="\${HOME}/.ssh/arc-slurm-proxy.log"
+log() { printf '%s [%s] %s\\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$$" "$*" >> "$LOG" 2>/dev/null; }
+if [ -f "$LOG" ] && [ "$(wc -l < "$LOG")" -gt 400 ]; then tail -n 200 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; fi
+
+log "start job=$JOB_NAME mode=$MODE"
+err=$(mktemp "\${TMPDIR:-/tmp}/arcproxy.XXXXXX")
+node=$(ssh -n -o BatchMode=yes ${login} "squeue -u \\$USER --name=$JOB_NAME --states=RUNNING --noheader --format=%N" 2>"$err" \\
         | head -n1 | tr -d '[:space:]')
+lookup_err=$(head -c 300 "$err" | tr '\\n' ' '); rm -f "$err"
 if [ -z "$node" ]; then
-  echo "arc: no RUNNING '$JOB_NAME' job (or not signed in). Use 'Arc: Allocate Compute Node'." >&2
+  log "FAIL lookup: no RUNNING '$JOB_NAME' job; ssh said: $lookup_err"
+  echo "arc: no RUNNING '$JOB_NAME' job, or the '${login}' master connection is down ($lookup_err). Use 'Arc: Sign In' / 'Arc: Allocate Compute Node'." >&2
   exit 1
 fi
 case "$node" in
-  *\\[*) echo "arc: holder job spans multiple nodes ($node); use a 1-node job." >&2; exit 1 ;;
+  *\\[*) log "FAIL multi-node $node"; echo "arc: holder job spans multiple nodes ($node); use a 1-node job." >&2; exit 1 ;;
 esac
+log "node=$node → connecting ($MODE)"
 if [ "$MODE" = relay ]; then
   exec ssh -o BatchMode=yes ${login} "bash -c 'exec 3<>/dev/tcp/$node/22; cat <&3 & exec cat >&3'"
 fi

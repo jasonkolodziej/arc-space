@@ -108,6 +108,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   reg('arc.setup.remote', S.prepareRemote);
   reg('arc.setup.verify', S.verify);
   reg('arc.diagnoseNode', S.diagnoseNode);
+  reg('arc.checkNodeEnv', S.checkNodeEnv);
   reg('arc.findVault', async () => { const c = await S.findVault(true); vscode.window.showInformationMessage(`Arc vault: ${c.detail}`); refreshAll(); });
   reg('arc.signIn', async () => { if (await S.signIn()) refreshAll(); });
   reg('arc.signOut', async () => { await S.signOut(); refreshAll(); });
@@ -161,6 +162,11 @@ export function activate(ctx: vscode.ExtensionContext) {
     }
   }));
 
+  const ver = String(ctx.extension.packageJSON.version);
+  if (utsaId() && ctx.globalState.get('arc.sshFilesVersion') !== ver) {
+    try { S.writeManagedSshFiles(); void ctx.globalState.update('arc.sshFilesVersion', ver); out.appendLine(`managed ssh files refreshed for ${ver}`); }
+    catch (e) { out.appendLine(`could not refresh ssh files: ${errMsg(e)}`); }
+  }
   void S.refreshSetupContext();
   void poll();
   void S.maybePromptWorkspaceReview();

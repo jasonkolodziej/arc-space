@@ -2,7 +2,7 @@
   "name": "arc-space",
   "displayName": "Arc Space — HPC Manager",
   "description": "Guided Remote-SSH setup for UTSA Arc (Login, ControlMaster, compute-node hop), partitions/nodes, your Slurm jobs, tasks, and home/work/vault storage.",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/arc-filled.png",
@@ -430,6 +430,12 @@
         "title": "Find Vault Folder",
         "category": "Arc",
         "icon": "$(archive)"
+      },
+      {
+        "command": "arc.checkNodeEnv",
+        "title": "Check Node for VS Code Server (fix install errors)",
+        "category": "Arc",
+        "icon": "$(tools)"
       }
     ],
     "menus": {
@@ -506,6 +512,10 @@
         {
           "command": "arc.findVault",
           "when": "view == arc.storage"
+        },
+        {
+          "command": "arc.checkNodeEnv",
+          "when": "view =~ /^arc\\./"
         }
       ],
       "view/item/context": [

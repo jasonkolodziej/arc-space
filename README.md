@@ -1,4 +1,4 @@
-# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.3.1
+# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.3.3
 
 Reference configuration for developing on UTSA **Arc** from VS Code: selecting and holding a compute node, seeing node availability, managing your Slurm jobs, and moving files between the three storage tiers.
 
@@ -189,6 +189,24 @@ A watchdog moves to the next route if no sample arrives within 25 s (e.g. a step
 | Node allows only hostbased auth | Arc permits node SSH only from inside the cluster | Structural. "Open on node" is disabled |
 
 Only structural results disable "Open on node".
+
+**Reading "Got bad result from install script".** First check the Remote-SSH output for the install script's first line, `<id>: running`.
+- If that line **never appears** and the attempt ends within a second or two, the SSH connection itself failed; nothing ran on the node. Look at `~/.ssh/arc-slurm-proxy.log` and run **Arc: Diagnose Node Connection**.
+- Only if the line **does** appear is it a server-install problem on the node, covered below.
+
+v0.3.3 fixes a proxy bug that produced exactly the first case: the node lookup (`ssh arc squeue …`) read from stdin, which inside a ProxyCommand is the SSH handshake itself. The lookup now uses `ssh -n`. The managed SSH files are rewritten automatically when the extension version changes.
+
+**Server install problems on the node.** This means SSH login succeeded but the VS Code server could not install or start on the node. **Arc: Check Node for VS Code Server** inspects the node through the cluster-internal SSH path (which works even if your Mac's key needs a passphrase). It checks:
+- whether shell start-up files print output, which corrupts the install handshake (it points to the file and line)
+- glibc ≥ 2.28
+- `flock` support on Lustre
+- outbound internet from the node
+- free space
+
+It then proposes, for your review:
+- `remote.SSH.localServerDownload: "always"` when nodes are offline
+- `remote.SSH.lockfilesInTmp` when `flock` is unsupported
+- a separate `remote.SSH.serverInstallPath` for `arc-node`, so the login and node windows don't share `~/.vscode-server` on Lustre at the same time
 
 **Vault location.** The vault may not be named after your ID. UTSA's training shows named folders under `/vault/research`. **Arc: Find Vault Folder** lists folders there that you own or can write to and saves your choice to `arc.storage`. If there are none, your vault may not be provisioned yet; request it through support.utsa.edu/myportal.
 
