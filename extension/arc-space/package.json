@@ -1,7 +1,7 @@
 {
   "name": "arc-space",
   "displayName": "Arc HPC (UTSA) — Space manager",
-  "description": "Guided Remote-SSH setup for UTSA Arc (DUO, ControlMaster, compute-node hop), partitions/nodes, your Slurm jobs, tasks, and home/work/vault storage.",
+  "description": "Guided Remote-SSH setup for UTSA Arc (Login, ControlMaster, compute-node hop), partitions/nodes, your Slurm jobs, tasks, and home/work/vault storage.",
   "version": "0.3.0",
   "publisher": "local",
   "license": "MIT",
