@@ -1,0 +1,110 @@
+{
+  // Installed to ~/.arc/arc.code-workspace by setup-on-arc.sh (__USER__ is substituted).
+  // Open it via Remote-SSH on either host:  arc (login: edit / submit / transfer)
+  //                                         arc-node (compute: run, debug, notebooks)
+  "folders": [
+    { "name": "home · code & envs (backed up · 100 GB)",        "path": "/home/__USER__/projects" },
+    { "name": "work · job I/O & data (no backup · 30-day purge)", "path": "/work/__USER__" },
+    { "name": "vault · archive (backed up · 1 TB)",             "path": "/vault/research/__USER__" }
+  ],
+
+  "settings": {
+    // ---------- Lustre-friendly file watching / search ----------
+    // /work is a 1.1 PB Lustre FS; recursive watchers and full-text search over datasets
+    // hammer the metadata servers and make the VS Code server crawl.
+    "files.watcherExclude": {
+      "/work/__USER__/**/data/**": true,
+      "/work/__USER__/**/datasets/**": true,
+      "/work/__USER__/**/checkpoints/**": true,
+      "/work/__USER__/**/wandb/**": true,
+      "/work/__USER__/**/mlruns/**": true,
+      "/vault/research/__USER__/**": true,
+      "**/.venv/**": true, "**/.conda/**": true, "**/__pycache__/**": true,
+      "**/.git/objects/**": true, "**/node_modules/**": true
+    },
+    "search.exclude": {
+      "**/data": true, "**/datasets": true, "**/checkpoints": true,
+      "**/wandb": true, "**/mlruns": true, "**/*.nc": true, "**/*.h5": true,
+      "**/*.pt": true, "**/*.ckpt": true, "**/*.npz": true, "**/*.zarr": true
+    },
+    "search.followSymlinks": false,
+    "files.exclude": { "**/__pycache__": true, "**/.ipynb_checkpoints": true },
+    "explorer.autoReveal": false,
+    "git.autoRepositoryDetection": "openEditors",
+    "git.autofetch": false,
+
+    // ---------- Slurm scripts ----------
+    "files.associations": { "*.sbatch": "shellscript", "*.slurm": "shellscript" },
+
+    // ---------- Terminal environment: regenerable caches → /work, not the 100 GB home quota ----------
+    "terminal.integrated.env.linux": {
+      "PATH": "/home/__USER__/.local/bin:${env:PATH}",
+      "SQUEUE_FORMAT": "%.10i %.10P %.22j %.9T %.10M %.10L %.4D %R",
+      "PIP_CACHE_DIR": "/work/__USER__/.cache/pip",
+      "UV_CACHE_DIR": "/work/__USER__/.cache/uv",
+      "HF_HOME": "/work/__USER__/.cache/huggingface",
+      "TORCH_HOME": "/work/__USER__/.cache/torch",
+      "CONDA_PKGS_DIRS": "/work/__USER__/.cache/conda-pkgs"
+    },
+
+    // ---------- Arc Slurm extension ----------
+    "arc.holdJobName": "vscode",
+    "arc.sshNodeHost": "arc-node",
+    "arc.defaultWalltime": "04:00:00",
+    "arc.refreshSeconds": 30,
+    "arc.hiddenPartitions": ["softmatter", "dgxa100", "uavlab", "uavlab2", "trustlab"],
+    "arc.purgeWarnDays": 25,
+    "arc.limits": { "maxJobs": 10, "maxNodes": 20 }
+  },
+
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-toolsai.jupyter",
+      "timonwong.shellcheck",
+      "local.arc-slurm"
+    ],
+    "unwantedRecommendations": []
+  },
+
+  "tasks": {
+    "version": "2.0.0",
+    "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+    "tasks": [
+      { "label": "Arc: Partitions & node states", "type": "shell", "command": "arc partitions", "problemMatcher": [] },
+      { "label": "Arc: Idle nodes by partition",  "type": "shell", "command": "arc idle",       "problemMatcher": [] },
+      { "label": "Arc: My jobs",                  "type": "shell", "command": "arc jobs",       "problemMatcher": [] },
+      { "label": "Arc: Watch my jobs",            "type": "shell", "command": "watch -n 15 squeue -u $USER", "isBackground": true, "problemMatcher": [] },
+
+      { "label": "Arc: Allocate VS Code node",    "type": "shell",
+        "command": "arc alloc ${input:partition} ${input:walltime}", "problemMatcher": [] },
+      { "label": "Arc: Release VS Code node",     "type": "shell", "command": "arc release",    "problemMatcher": [] },
+      { "label": "Arc: Interactive shell (srun --pty)", "type": "shell",
+        "command": "arc interactive ${input:partition} ${input:walltime}", "problemMatcher": [] },
+
+      { "label": "Arc: Submit current batch script", "type": "shell",
+        "command": "sbatch ${file}", "options": { "cwd": "${fileDirname}" }, "problemMatcher": [] },
+      { "label": "Arc: Job details",     "type": "shell", "command": "scontrol show job ${input:jobid}", "problemMatcher": [] },
+      { "label": "Arc: Follow job log",  "type": "shell", "command": "arc log ${input:jobid}", "isBackground": true, "problemMatcher": [] },
+      { "label": "Arc: Job efficiency",  "type": "shell", "command": "arc eff ${input:jobid}", "problemMatcher": [] },
+      { "label": "Arc: Cancel job",      "type": "shell", "command": "scancel ${input:jobid}", "problemMatcher": [] },
+      { "label": "Arc: Hold job",        "type": "shell", "command": "scontrol hold ${input:jobid}", "problemMatcher": [] },
+      { "label": "Arc: Release held job","type": "shell", "command": "scontrol release ${input:jobid}", "problemMatcher": [] },
+      { "label": "Arc: Requeue job",     "type": "shell", "command": "scontrol requeue ${input:jobid}", "problemMatcher": [] },
+
+      { "label": "Arc: Storage usage",            "type": "shell", "command": "arc storage", "problemMatcher": [] },
+      { "label": "Arc: /work purge candidates",   "type": "shell", "command": "arc purge 25", "problemMatcher": [] },
+      { "label": "Arc: Archive selected path → vault", "type": "shell", "command": "arc archive '${input:path}'", "problemMatcher": [] },
+      { "label": "Arc: Stage selected path → work",    "type": "shell", "command": "arc stage '${input:path}'",   "problemMatcher": [] }
+    ],
+    "inputs": [
+      { "id": "partition", "type": "pickString", "description": "Partition",
+        "options": ["compute1", "compute2", "compute3", "bigmem", "bigmem2",
+                    "gpu1v100", "gpu2v100", "gpu4v100", "gpu1a100"],
+        "default": "compute1" },
+      { "id": "walltime", "type": "promptString", "description": "Walltime HH:MM:SS (72h max; compute2 240h)", "default": "04:00:00" },
+      { "id": "jobid",    "type": "promptString", "description": "Slurm job ID" },
+      { "id": "path",     "type": "promptString", "description": "Absolute path", "default": "${file}" }
+    ]
+  }
+}

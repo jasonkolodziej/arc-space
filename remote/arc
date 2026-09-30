@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# arc — small Slurm/storage helper for UTSA Arc. Install to ~/.local/bin/arc.
+# Used directly in terminals and by the workspace tasks.
+set -euo pipefail
+
+HOLD="${ARC_HOLD_JOB:-vscode}"
+WORK="${ARC_WORK:-/work/$USER}"
+VAULT="${ARC_VAULT:-/vault/research/$USER}"
+LOGDIR="$HOME/.arc/logs"
+mkdir -p "$LOGDIR"
+
+die() { echo "arc: $*" >&2; exit 1; }
+
+part_cpus() { sinfo -h -p "$1" -o %c | head -n1 | tr -d '+'; }
+part_gpu_gres() {  # first gpu GRES token for a partition, e.g. gpu:v100:2
+  sinfo -h -p "$1" -o %G | head -n1 | sed 's/([^)]*)//g' | tr ',' '\n' | grep '^gpu' | head -n1 || true
+}
+holder() { squeue -u "$USER" --name="$HOLD" -h -o "%i|%T|%N|%L|%R" | head -n1; }
+
+cmd_partitions() {
+  sinfo -o "%.12P %.5a %.11l %.6D %.9t %.5c %.8m %.22G"
+}
+
+cmd_idle() {
+  echo "Idle (allocatable) nodes by partition — nodes are exclusive per user, so 'mix' is not available to you:"
+  sinfo -h -t idle -o "%P %D" | awk '{a[$1]+=$2} END {for (p in a) printf "  %-12s %3d idle\n", p, a[p]}' | sort
+}
+
+cmd_jobs() {
+  squeue -u "$USER" -o "%.10i %.10P %.22j %.9T %.10M %.10L %.4D %R"
+  local n; n=$(squeue -u "$USER" -h | wc -l)
+  echo "— $n / 10 active jobs (Arc fair-use limit)"
+}
+
+cmd_alloc() {  # arc alloc PARTITION [HH:MM:SS] [CPUS]
+  local part="${1:?usage: arc alloc PARTITION [TIME] [CPUS]}" time="${2:-04:00:00}" cpus="${3:-}"
+  [ -n "$(holder)" ] && die "a '$HOLD' job already exists: $(holder)  (arc release first)"
+  [ -z "$cpus" ] && cpus=$(part_cpus "$part")
+  local gres; gres=$(part_gpu_gres "$part")
+  local extra=()
+  if [ -n "$gres" ]; then
+    extra+=(--gres="$gres")
+    echo "NOTE: GPU partition. Arc terminates jobs whose GPUs sit idle for more than 1 hour."
+    echo "      Hold GPU nodes only while you are actually running GPU work."
+  fi
+  local id
+  id=$(sbatch --parsable -J "$HOLD" -p "$part" -t "$time" -N 1 -n 1 -c "$cpus" ${extra[@]+"${extra[@]}"} \
+        -o "$LOGDIR/%x-%j.log" --wrap "sleep infinity")
+  id="${id%%;*}"
+  echo "Submitted holder job $id on $part ($time, $cpus cores${gres:+, $gres}). Waiting…"
+  for _ in $(seq 1 120); do
+    IFS='|' read -r state node reason <<<"$(squeue -j "$id" -h -o "%T|%N|%R")"
+    case "$state" in
+      RUNNING) echo "READY  node=$node  → connect with Remote-SSH host 'arc-node'"; return 0 ;;
+      "")      die "job $id disappeared; see $LOGDIR" ;;
+      *)       printf '\r  %s (%s)   ' "$state" "$reason" ;;
+    esac
+    sleep 5
+  done
+  echo; echo "Still pending after 10 min; it stays queued. Check 'arc jobs'."
+}
+
+cmd_node()    { local h; h=$(holder); [ -n "$h" ] || die "no '$HOLD' job"; echo "$h" | cut -d'|' -f3; }
+cmd_release() { scancel -u "$USER" --name="$HOLD" && echo "Released '$HOLD' job(s)."; }
+
+cmd_shell() {  # attach a shell to a running job (default: holder)
+  local id="${1:-$(holder | cut -d'|' -f1)}"
+  [ -n "$id" ] || die "no job id and no '$HOLD' job"
+  exec srun --jobid="$id" --overlap --pty bash -l
+}
+
+cmd_interactive() {  # doc-style: srun -p PART -n 1 -t TIME -c CPUS --pty bash
+  local part="${1:?usage: arc interactive PARTITION [TIME]}" time="${2:-02:00:00}"
+  local cpus gres; cpus=$(part_cpus "$part"); gres=$(part_gpu_gres "$part")
+  exec srun -p "$part" -n 1 -t "$time" -c "$cpus" ${gres:+--gres="$gres"} --pty bash -l
+}
+
+cmd_eff() {
+  local id="${1:?usage: arc eff JOBID}"
+  sacct -j "$id" --format=JobID,JobName,Partition,Elapsed,State,AllocCPUS,TotalCPU,ReqMem,MaxRSS,ExitCode
+}
+
+cmd_log() {
+  local id="${1:?usage: arc log JOBID}" f
+  f=$(scontrol show job "$id" | tr ' ' '\n' | sed -n 's/^StdOut=//p')
+  [ -n "$f" ] || die "no StdOut for $id (finished jobs: default is slurm-$id.out in the submit dir)"
+  exec tail -n 200 -F "$f"
+}
+
+cmd_storage() {
+  echo "== /home  (backed up · 100 GB hard quota · code, envs, builds)"
+  lfs quota -h -u "$USER" /home 2>/dev/null || df -hP "$HOME"
+  echo; echo "== /work  (NOT backed up · 30-day unaccessed purge · job I/O, data, logs)"
+  lfs quota -h -u "$USER" /work 2>/dev/null || df -hP "$WORK"
+  echo; echo "== vault ($VAULT)  (backed up + replicated · 1 TB · archive)"
+  df -hP "$VAULT" 2>/dev/null || echo "  vault not mounted here (check path / node)"
+}
+
+cmd_purge() {  # list /work files not accessed in N days (default 25 → 5-day warning)
+  local days="${1:-25}"
+  echo "Files in $WORK not accessed for >$days days (purge window is 30):"
+  find "$WORK" -xdev -type f -atime +"$days" -printf '%AY-%Am-%Ad  %10s  %p\n' 2>/dev/null \
+    | sort | tee "$HOME/.arc/purge-candidates.txt" | tail -n 200
+  echo "— full list: ~/.arc/purge-candidates.txt  (archive what you need: arc archive PATH)"
+}
+
+cmd_archive() {  # arc archive /work/$USER/some/path  → $VAULT/from-work/some/path
+  local src="${1:?usage: arc archive PATH}"; src=$(realpath "$src")
+  local rel="${src#"$WORK"/}"; [ "$rel" = "$src" ] && rel=$(basename "$src")
+  local dest="$VAULT/from-work/$(dirname "$rel")"
+  mkdir -p "$dest"
+  rsync -ah --info=progress2 "$src" "$dest/"
+  echo "Archived → $dest/$(basename "$src")  (source kept)"
+}
+
+cmd_stage() {  # copy from home/vault into /work for job I/O
+  local src="${1:?usage: arc stage PATH}"; src=$(realpath "$src")
+  local dest="$WORK/staged"; mkdir -p "$dest"
+  rsync -ah --info=progress2 "$src" "$dest/"
+  echo "Staged → $dest/$(basename "$src")"
+}
+
+case "${1:-help}" in
+  partitions|idle|jobs|alloc|node|release|shell|interactive|eff|log|storage|purge|archive|stage)
+    c="$1"; shift; "cmd_$c" "$@" ;;
+  *) sed -n '2,3p' "$0"; echo "commands: partitions idle jobs alloc node release shell interactive eff log storage purge archive stage" ;;
+esac

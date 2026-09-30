@@ -1,0 +1,403 @@
+{
+  "name": "arc-space",
+  "displayName": "Arc HPC (UTSA) — Space manager",
+  "description": "Partitions/nodes, your Slurm jobs, compute-node allocation + Remote-SSH hop, and home/work/vault storage for UTSA Arc.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.138.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.138.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.9.3"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "arc",
+          "title": "Arc HPC",
+          "icon": "media/arc.svg"
+        }
+      ]
+    },
+    "views": {
+      "arc": [
+        {
+          "id": "arc.jobs",
+          "name": "My Jobs"
+        },
+        {
+          "id": "arc.partitions",
+          "name": "Partitions & Nodes"
+        },
+        {
+          "id": "arc.storage",
+          "name": "Storage"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "arc.refresh",
+        "title": "Refresh",
+        "category": "Arc",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "arc.allocate",
+        "title": "Allocate Compute Node for VS Code",
+        "category": "Arc",
+        "icon": "$(vm-connect)"
+      },
+      {
+        "command": "arc.allocateOn",
+        "title": "Allocate Node on This Partition",
+        "category": "Arc",
+        "icon": "$(vm-connect)"
+      },
+      {
+        "command": "arc.connectNode",
+        "title": "Open This Workspace on Allocated Node",
+        "category": "Arc",
+        "icon": "$(remote)"
+      },
+      {
+        "command": "arc.releaseNode",
+        "title": "Release VS Code Node",
+        "category": "Arc",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "arc.interactiveShell",
+        "title": "Interactive Shell (srun --pty)",
+        "category": "Arc",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "arc.submitBatch",
+        "title": "Submit Batch Script (sbatch)",
+        "category": "Arc",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "arc.jobDetails",
+        "title": "Show Details (scontrol)",
+        "category": "Arc",
+        "icon": "$(info)"
+      },
+      {
+        "command": "arc.jobLog",
+        "title": "Open Output Log",
+        "category": "Arc",
+        "icon": "$(output)"
+      },
+      {
+        "command": "arc.jobShell",
+        "title": "Attach Shell to Job",
+        "category": "Arc",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "arc.jobEfficiency",
+        "title": "Efficiency (sacct)",
+        "category": "Arc",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "arc.jobCancel",
+        "title": "Cancel Job",
+        "category": "Arc",
+        "icon": "$(close)"
+      },
+      {
+        "command": "arc.jobHold",
+        "title": "Hold Job",
+        "category": "Arc",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "arc.jobRelease",
+        "title": "Release Held Job",
+        "category": "Arc",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "arc.jobRequeue",
+        "title": "Requeue Job",
+        "category": "Arc",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "arc.cancelAll",
+        "title": "Cancel ALL My Jobs",
+        "category": "Arc",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "arc.storageTerminal",
+        "title": "Open Terminal Here",
+        "category": "Arc",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "arc.storageAdd",
+        "title": "Add to Workspace",
+        "category": "Arc",
+        "icon": "$(add)"
+      },
+      {
+        "command": "arc.purgeScan",
+        "title": "Scan /work Purge Candidates",
+        "category": "Arc",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "arc.archiveToVault",
+        "title": "Arc: Archive to Vault (rsync)",
+        "category": "Arc"
+      },
+      {
+        "command": "arc.stageToWork",
+        "title": "Arc: Stage to /work (rsync)",
+        "category": "Arc"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "arc.allocate",
+          "when": "view == arc.jobs",
+          "group": "navigation@1"
+        },
+        {
+          "command": "arc.refresh",
+          "when": "view =~ /^arc\\./",
+          "group": "navigation@9"
+        },
+        {
+          "command": "arc.cancelAll",
+          "when": "view == arc.jobs"
+        },
+        {
+          "command": "arc.interactiveShell",
+          "when": "view == arc.jobs"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "arc.connectNode",
+          "when": "viewItem =~ /^job:running:holder/",
+          "group": "inline@1"
+        },
+        {
+          "command": "arc.jobShell",
+          "when": "viewItem =~ /^job:running/",
+          "group": "inline@2"
+        },
+        {
+          "command": "arc.jobCancel",
+          "when": "viewItem =~ /^job:/",
+          "group": "inline@9"
+        },
+        {
+          "command": "arc.jobDetails",
+          "when": "viewItem =~ /^job:/",
+          "group": "1_inspect@1"
+        },
+        {
+          "command": "arc.jobLog",
+          "when": "viewItem =~ /^job:/",
+          "group": "1_inspect@2"
+        },
+        {
+          "command": "arc.jobEfficiency",
+          "when": "viewItem =~ /^job:/",
+          "group": "1_inspect@3"
+        },
+        {
+          "command": "arc.jobHold",
+          "when": "viewItem =~ /^job:pending/",
+          "group": "2_control@1"
+        },
+        {
+          "command": "arc.jobRelease",
+          "when": "viewItem =~ /^job:pending/",
+          "group": "2_control@2"
+        },
+        {
+          "command": "arc.jobRequeue",
+          "when": "viewItem =~ /^job:(running|completing)/",
+          "group": "2_control@3"
+        },
+        {
+          "command": "arc.allocateOn",
+          "when": "viewItem == partition",
+          "group": "inline"
+        },
+        {
+          "command": "arc.storageTerminal",
+          "when": "viewItem =~ /^storage/",
+          "group": "inline@1"
+        },
+        {
+          "command": "arc.storageAdd",
+          "when": "viewItem =~ /^storage/",
+          "group": "inline@2"
+        },
+        {
+          "command": "arc.purgeScan",
+          "when": "viewItem == storage:purge",
+          "group": "inline@3"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "arc.archiveToVault",
+          "when": "resourcePath =~ /^\\/work\\//",
+          "group": "7_arc@1"
+        },
+        {
+          "command": "arc.stageToWork",
+          "when": "resourcePath =~ /^\\/(home|vault)\\//",
+          "group": "7_arc@2"
+        },
+        {
+          "command": "arc.submitBatch",
+          "when": "resourceExtname =~ /^\\.(sbatch|slurm|sh)$/",
+          "group": "7_arc@3"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "arc.submitBatch",
+          "when": "resourceExtname =~ /^\\.(sbatch|slurm)$/",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Arc HPC",
+      "properties": {
+        "arc.holdJobName": {
+          "type": "string",
+          "default": "vscode",
+          "description": "Slurm job name of the placeholder job that holds your VS Code compute node."
+        },
+        "arc.sshNodeHost": {
+          "type": "string",
+          "default": "arc-node",
+          "description": "Local ~/.ssh/config Host alias that proxies to the allocated node."
+        },
+        "arc.defaultWalltime": {
+          "type": "string",
+          "default": "04:00:00"
+        },
+        "arc.refreshSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 10
+        },
+        "arc.hiddenPartitions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "arc.requestGpuGres": {
+          "type": "boolean",
+          "default": true,
+          "description": "Add --gres=<partition GPU GRES from sinfo> when allocating on GPU partitions."
+        },
+        "arc.purgeWarnDays": {
+          "type": "number",
+          "default": 25,
+          "description": "Flag /work files not accessed for this many days (Arc purges at 30)."
+        },
+        "arc.notifyOnJobEnd": {
+          "type": "boolean",
+          "default": true
+        },
+        "arc.limits": {
+          "type": "object",
+          "default": {
+            "maxJobs": 10,
+            "maxNodes": 20
+          },
+          "properties": {
+            "maxJobs": {
+              "type": "number"
+            },
+            "maxNodes": {
+              "type": "number"
+            }
+          }
+        },
+        "arc.storage": {
+          "type": "array",
+          "default": [
+            {
+              "label": "home",
+              "path": "${home}",
+              "quotaMount": "/home",
+              "purpose": "Backed up · 100 GB hard quota · code, envs, builds"
+            },
+            {
+              "label": "work",
+              "path": "/work/${user}",
+              "quotaMount": "/work",
+              "purpose": "NOT backed up · files unaccessed 30 days may be purged · job I/O, datasets, logs",
+              "purge": true
+            },
+            {
+              "label": "vault",
+              "path": "/vault/research/${user}",
+              "quotaMount": "",
+              "purpose": "Backed up + replicated to UT Arlington · 1 TB · archive"
+            }
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "quotaMount": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "purge": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "packageManager": "pnpm@12.8.1+sha512.f64ba907507f5ceafe06c8d38e6052d0179444580ec1279ddd5bfc11cb48aa8a2644b66598e07e761da84872a9fc57d5f902b87fa49d024198d558612aabbe45"
+}

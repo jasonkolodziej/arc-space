@@ -1,0 +1,20 @@
+// LOCAL (Mac) User settings.json additions for Remote-SSH to Arc.
+{
+  // DUO prompts appear in the SSH login terminal; you must be able to see and answer them.
+  "remote.SSH.showLoginTerminal": true,
+  "remote.SSH.connectTimeout": 90,
+  "remote.SSH.useLocalServer": true,
+  "remote.SSH.remotePlatform": { "arc": "linux", "arc-node": "linux" },
+
+  // Login nodes are multi-user: bind the VS Code server to a Unix socket instead of a TCP port.
+  "remote.SSH.remoteServerListenOnSocket": true,
+
+  // Auto-installed on every SSH host (stored under ~/.vscode-server on /home).
+  "remote.SSH.defaultExtensions": [
+    "ms-python.python",
+    "ms-toolsai.jupyter",
+    "timonwong.shellcheck"
+  ],
+
+  "remote.restoreForwardedPorts": true
+}
