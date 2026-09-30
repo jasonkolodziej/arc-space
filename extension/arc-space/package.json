@@ -2,7 +2,7 @@
   "name": "arc-space",
   "displayName": "Arc HPC (UTSA) — Space manager",
   "description": "Guided Remote-SSH setup for UTSA Arc (DUO, ControlMaster, compute-node hop), partitions/nodes, your Slurm jobs, tasks, and home/work/vault storage.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -223,6 +223,12 @@
     ],
     "commands": [
       {
+        "command": "arc.monitor",
+        "title": "Open Job Monitor",
+        "category": "Arc",
+        "icon": "$(pulse)"
+      },
+      {
         "command": "arc.setup.all",
         "title": "Run Setup",
         "category": "Arc",
@@ -405,6 +411,12 @@
         "command": "arc.stageToWork",
         "title": "Arc: Stage to /work (rsync)",
         "category": "Arc"
+      },
+      {
+        "command": "arc.monitorJob",
+        "title": "Monitor Job",
+        "category": "Arc",
+        "icon": "$(pulse)"
       }
     ],
     "menus": {
@@ -428,6 +440,10 @@
         {
           "command": "arc.stageToWork",
           "when": "false"
+        },
+        {
+          "command": "arc.monitorJob",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -435,6 +451,11 @@
           "command": "arc.allocate",
           "when": "view == arc.jobs",
           "group": "navigation@1"
+        },
+        {
+          "command": "arc.monitor",
+          "when": "view == arc.jobs",
+          "group": "navigation@2"
         },
         {
           "command": "arc.refresh",
@@ -467,6 +488,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "arc.monitorJob",
+          "when": "viewItem =~ /^job:/",
+          "group": "inline@0"
+        },
         {
           "command": "arc.connectNode",
           "when": "viewItem =~ /^job:running:holder/",
@@ -712,6 +738,19 @@
               }
             }
           }
+        },
+        "arc.monitorInterval": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Seconds between live samples in the job monitor."
+        },
+        "arc.monitorMaxMinutes": {
+          "type": "number",
+          "default": 240,
+          "minimum": 5,
+          "description": "The node-side sampler stops on its own after this long, even if the panel stays open."
         }
       }
     }

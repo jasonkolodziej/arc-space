@@ -11,6 +11,7 @@ import { Provider, jobItems, partitionItems, storageItems, statusFor } from './v
 import * as A from './actions';
 import * as S from './setup';
 import { ArcTaskProvider } from './tasks';
+import { MonitorPanel } from './monitor';
 
 let status: vscode.StatusBarItem;
 let jobsView: Provider, partView: Provider, storageView: Provider;
@@ -120,6 +121,10 @@ export function activate(ctx: vscode.ExtensionContext) {
   reg('arc.interactiveShell', A.interactiveShell);
   reg('arc.submitBatch', A.submitBatch);
 
+  // monitor
+  reg('arc.monitor', () => MonitorPanel.show(ctx));
+  reg('arc.monitorJob', (a: { data?: { id: string } }) => MonitorPanel.show(ctx, a?.data?.id));
+
   // jobs
   reg('arc.jobDetails', A.jobDetails);
   reg('arc.jobLog', A.jobLog);
@@ -163,4 +168,4 @@ export function activate(ctx: vscode.ExtensionContext) {
   }
 }
 
-export function deactivate() { /* disposables handle cleanup */ }
+export function deactivate() { MonitorPanel.current?.dispose(); }

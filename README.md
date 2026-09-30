@@ -1,4 +1,4 @@
-# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.2
+# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.3
 
 Reference configuration for developing on UTSA **Arc** from VS Code: selecting and holding a compute node, seeing node availability, managing your Slurm jobs, and moving files between the three storage tiers.
 
@@ -129,13 +129,47 @@ Streaming tasks run in a real terminal: directly in an Arc window, or via `ssh -
 
 ---
 
-## 7. What's where
+## 7. Job monitor (v0.3)
+
+Open it from the pulse icon on any job in **My Jobs**, the Jobs view toolbar, or **Arc: Open Job Monitor**. It is a btop-style panel in an editor tab. It works from local, login-node and compute-node windows.
+
+**Live tab (running jobs)**
+
+| Panel | Shows | Source |
+|---|---|---|
+| Efficiency strip | Average CPU busy vs allocated cores, peak memory vs node/request, walltime vs limit, GPU average utilization, Slurm CPU efficiency | Samples since the panel opened, plus sacct |
+| cpu | History graph, current %, iowait, load, per-core meters | `/proc/stat` |
+| mem | Used / cache / free / swap, your process count, threads and RSS | `/proc/meminfo`, `/proc/<pid>` |
+| gpu | Per-GPU utilization, memory, power vs limit, temperature. Banner after 20 min of idle GPUs (Arc kills them at 1 h) | `nvidia-smi` |
+| net | Receive/send per interface including InfiniBand, as a mirrored graph | `/proc/net/dev`, `/sys/class/infiniband` |
+| io | Lustre read/write per filesystem (`/work`, `/home`) and local disk | `llite.*.stats`, `/proc/diskstats` |
+| slurm | Walltime left and per-step sstat (avg CPU, max RSS, disk I/O), refreshed every 15 s | `sstat` |
+| processes | Your processes by **current** CPU% (from `/proc` tick deltas, not ps's lifetime average), mem%, RSS, threads, age; sortable columns | `/proc/<pid>/stat` |
+
+Arc nodes are exclusive per user, so node-level counters are the job's usage.
+
+**History tab:** sacct over 1/7/30/90 days. For each job it shows CPU efficiency (TotalCPU ÷ elapsed × cores), memory efficiency (peak step MaxRSS ÷ ReqMem, including legacy per-CPU `Mc` requests), and walltime used vs requested, with plain-language right-sizing notes. Colours grade efficiency: red means wasted cores, memory near its limit, or a timeout. Click a row to open its report card.
+
+**How live data is collected.** A small bash/awk sampler (`media/monitor/arcmon.sh`, no Python or modules) is sent over the existing SSH connection. It emits raw counters, and the extension computes the rates. The extension tries these routes in order:
+1. `srun --jobid --overlap` inside the job. GPU jobs first try a step bound to the job's GPUs so `nvidia-smi` can see them.
+2. SSH from the login node to the job's node(s).
+3. Accounting only.
+
+A watchdog moves to the next route if no sample arrives within 25 s (e.g. a step waiting for resources). The sampler exits when the panel closes, or after `arc.monitorMaxMinutes` (default 240). Multi-node jobs run one sampler per node, and you pick the host with chips in the header. The sampling interval is 1–10 s (`arc.monitorInterval`).
+
+**Limits to know**
+- Network is node-level. Slurm doesn't attribute interconnect traffic per job unless the site enables interconnect accounting, so "net" is the node's total, which is your job's on an exclusive node.
+- IB counters are 32-bit on some HCAs. A wrap shows as one zero interval rather than a spike.
+- If the job's GPUs are held without sharing, the GPU-bound step can't start. The monitor then falls back and says GPU metrics aren't visible from that route.
+
+## 8. What's where
 
 | Need | Where |
 |---|---|
 | Nodes available | **Partitions & Nodes** (idle/total, expand for per-node state) · task *Idle nodes by partition* |
 | Select & hold a node | ▶ on a partition or **Allocate** (sorted by idle, walltime validated, GPU-idle warning) · task *allocate* |
 | Move VS Code onto the node | Status bar **Arc node … ready** → opens the same workspace on `arc-node` |
+| Monitor a job | Pulse icon on a job → **Arc Monitor** (live + history efficiency) |
 | Jobs | **My Jobs**: live, with usage vs 10 jobs / 20 nodes. Actions: details, open/follow log, attach shell, sacct, cancel, hold/release, requeue, cancel all. Notifications on start/end and at <15 min left on your node. |
 | Submit | 🚀 in the editor title for `.sbatch/.slurm` · Explorer context · tasks |
 | Storage | **Storage**: purpose, quota/usage, terminal here, add to workspace, `/work` purge scan |
