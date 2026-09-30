@@ -2,7 +2,7 @@
   "name": "arc-space",
   "displayName": "Arc Space — HPC Manager",
   "description": "Guided Remote-SSH setup for UTSA Arc (Login, ControlMaster, compute-node hop), partitions/nodes, your Slurm jobs, tasks, and home/work/vault storage.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/arc-filled.png",

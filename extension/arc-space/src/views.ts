@@ -89,7 +89,6 @@ export function jobItems(jobs: Job[]): Item[] {
       color: running ? 'charts.green' : j.state === 'PENDING' ? 'charts.yellow' : undefined,
       context: `job:${j.state.toLowerCase()}${isHolder ? ':holder' : ''}`,
       data: j,
-      command: { command: 'arc.jobDetails', title: 'Details', arguments: [{ data: j }] },
     });
   })];
 }
@@ -128,7 +127,8 @@ export async function statusFor(status: vscode.StatusBarItem, jobs: Job[] | unde
   if (w === 'node' && holder?.state === 'RUNNING') {
     status.text = `$(vm-active) ${holder.nodeList} · ${holder.left} left`;
     status.tooltip = `This window runs on compute node ${holder.nodeList} (job ${holder.id}, ${holder.partition})`;
-    status.command = { command: 'arc.jobDetails', title: 'Details', arguments: [{ data: holder }] };
+    status.command = { command: 'arc.monitorJob', title: 'Monitor', arguments: [{ data: holder }] };
+    status.tooltip += ' · click for the live monitor';
     if (leftMinutes(holder.left) < 15 && !warnedLowTime) {
       warnedLowTime = true;
       vscode.window.showWarningMessage(`Arc: your node's job ends in ${holder.left}. Save your work.`, 'Start a new session')
@@ -144,8 +144,8 @@ export async function statusFor(status: vscode.StatusBarItem, jobs: Job[] | unde
     status.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
   } else if (holder) {
     status.text = `$(watch) Arc: ${holder.state.toLowerCase()} (${holder.where})`;
-    status.tooltip = `Holder job ${holder.id} is waiting for a node`;
-    status.command = { command: 'arc.jobDetails', title: 'Details', arguments: [{ data: holder }] };
+    status.tooltip = `Holder job ${holder.id} is waiting for a node (${holder.where}). Click to wait and open it here when it starts.`;
+    status.command = 'arc.startSession';
   } else {
     status.text = '$(rocket) Arc: start session';
     status.tooltip = 'Allocate a compute node and reopen this window on it (one window).';

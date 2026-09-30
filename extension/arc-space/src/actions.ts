@@ -5,6 +5,7 @@ import {
 } from './transport';
 import { getPartitions, getJobs, gpuGres, Partition, Job, submitHolder, scontrolField } from './slurm';
 import { ensureSignedIn, workspacePath } from './setup';
+import { showReport } from './docs';
 
 export type Report = (line: string) => void;
 let refreshHook: () => void = () => undefined;
@@ -20,10 +21,7 @@ async function guard(): Promise<boolean> {
   return ensureSignedIn();
 }
 
-async function showText(title: string, body: string) {
-  const doc = await vscode.workspace.openTextDocument({ content: `${title}\n${'─'.repeat(Math.min(title.length, 80))}\n\n${body}` });
-  await vscode.window.showTextDocument(doc, { preview: true });
-}
+const showText = (title: string, body: string, key?: string) => showReport(title, body, key);
 
 // ─────────────── partition / walltime pickers ───────────────
 
@@ -260,14 +258,14 @@ export const jobCmd = (verb: string, argv: (id: string) => [string, string[]], c
 
 export async function jobDetails(arg: unknown) {
   const j = await pickJob(arg);
-  if (j) await showText(`scontrol show job ${j.id}`, await rr('scontrol', ['show', 'job', j.id]));
+  if (j) await showText(`scontrol show job ${j.id}`, await rr('scontrol', ['show', 'job', j.id]), `scontrol-${j.id}`);
 }
 
 export const efficiencyText = (id: string) =>
   rr('sacct', ['-j', id, '--format=JobID,JobName%20,Partition,Elapsed,State,AllocCPUS,TotalCPU,ReqMem,MaxRSS,ExitCode']);
 export async function jobEfficiency(arg: unknown) {
   const j = await pickJob(arg);
-  if (j) await showText(`sacct ${j.id}`, await efficiencyText(j.id));
+  if (j) await showText(`sacct ${j.id}`, await efficiencyText(j.id), `sacct-${j.id}`);
 }
 
 export async function jobLog(arg: unknown) {
@@ -277,7 +275,7 @@ export async function jobLog(arg: unknown) {
   if (!f) { vscode.window.showWarningMessage(`No StdOut path for ${j.id} (finished jobs drop out of scontrol).`); return; }
   const u = arcUri(f);
   if (u) { await vscode.window.showTextDocument(u, { preview: true }); return; }
-  await showText(`${f} (last 2000 lines)`, await rr('tail', ['-n', '2000', f]).catch(e => errMsg(e)));
+  await showText(`${f} (last 2000 lines)`, await rr('tail', ['-n', '2000', f]).catch(e => errMsg(e)), `log-${j.id}`);
 }
 
 /** Shell snippet that follows job $id's StdOut. Avoids ${…} so VS Code task variables never collide. */
@@ -348,7 +346,7 @@ export async function purgeScan(arg: unknown) {
   const days = cfg().get<number>('purgeWarnDays', 25);
   const text = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
     title: `Arc: scanning ${s.path}…` }, () => purgeText(s.path, days));
-  await showText('/work purge candidates', text);
+  await showText('/work purge candidates', text, 'purge-scan');
 }
 
 const loginOnly = (p: string) => p.startsWith('/vault/');

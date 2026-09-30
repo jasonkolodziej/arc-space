@@ -12,6 +12,7 @@ import * as A from './actions';
 import * as S from './setup';
 import { ArcTaskProvider } from './tasks';
 import { MonitorPanel } from './monitor';
+import { registerReports } from './docs';
 
 let status: vscode.StatusBarItem;
 let jobsView: Provider, partView: Provider, storageView: Provider;
@@ -72,6 +73,7 @@ async function jobsRoot() {
 export function activate(ctx: vscode.ExtensionContext) {
   const out = vscode.window.createOutputChannel('Arc HPC');
   initTransport(out);
+  registerReports(ctx);
   S.initSetup(ctx);
   status = vscode.window.createStatusBarItem('arc.status', vscode.StatusBarAlignment.Left, 50);
   status.name = 'Arc HPC';

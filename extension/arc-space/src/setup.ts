@@ -12,6 +12,7 @@ import {
 } from './templates';
 import { reviewAndApply, planMerge, Baseline } from './merge';
 import { getPartitions } from './slurm';
+import { showReport } from './docs';
 import { diagnoseHop, HopResult, nodeEnvScript, parseNodeEnv, NodeEnv } from './diagnose';
 
 let ctx: vscode.ExtensionContext;
@@ -383,8 +384,7 @@ export async function verify(): Promise<boolean> {
   }
   advice += '\n\nIf Remote-SSH reaches the node but fails with "Got bad result from install script", run "Arc: Check Node for VS Code Server".';
   if (cfg().get('proxyMode') === 'relay') advice += '\n\nNote: the proxy now uses the bash relay because the login node blocks SSH forwarding.';
-  const doc = await vscode.workspace.openTextDocument({ content: `Arc verification — ${new Date().toLocaleString()}\n\n${report}${advice}\n` });
-  await vscode.window.showTextDocument(doc, { preview: true });
+  await showReport(`Arc verification — ${new Date().toLocaleString()}`, `${report}${advice}`, 'verification');
   log(report);
   await ctx.globalState.update(S.verified, utsaId());
   await refreshSetupContext();
@@ -415,8 +415,7 @@ export async function diagnoseNode() {
     await cfg().update('nodeSshAvailable', usable ? true : hop.structural ? false : null, vscode.ConfigurationTarget.Global);
     const checks = hopChecks(hop, true);
     const text = checks.map(c => `${c.ok === undefined ? 'ℹ' : c.ok ? '✅' : '❌'}  ${c.name}\n     ${c.detail}`).join('\n\n');
-    const doc = await vscode.workspace.openTextDocument({ content: `Arc node connection — ${new Date().toLocaleString()}\n\n${text}\n` });
-    await vscode.window.showTextDocument(doc, { preview: true });
+    await showReport(`Arc node connection — ${new Date().toLocaleString()}`, text, 'node-connection');
   } finally {
     if (testId) await runRemote(`scancel ${testId}`).catch(() => undefined);
   }
@@ -519,8 +518,7 @@ export async function checkNodeEnv() {
   const body = env.findings.map(x => `${mark(x.ok)}  ${x.name}\n     ${x.detail}`).join('\n\n') +
     (env.notes.length ? `\n\nWhat to do\n${env.notes.map(n => `  • ${n}`).join('\n')}` : '') +
     `\n\nProposed Remote-SSH settings (you review each one next):\n${JSON.stringify(env.settings, null, 2)}\n`;
-  const doc = await vscode.workspace.openTextDocument({ content: `Arc node environment — ${env.node} — ${new Date().toLocaleString()}\n\n${body}` });
-  await vscode.window.showTextDocument(doc, { preview: true });
+  await showReport(`Arc node environment — ${env.node} — ${new Date().toLocaleString()}`, body, 'node-environment');
   const n = await reviewAndApply('Arc: Remote-SSH settings for compute nodes', env.settings,
     ctx.globalState.get<Baseline>('arc.nodeEnvBaseline'), vscode.ConfigurationTarget.Global,
     b => ctx.globalState.update('arc.nodeEnvBaseline', b), 1);
