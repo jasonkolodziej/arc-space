@@ -56,11 +56,11 @@ export function workspaceSettings(id: string): Record<string, unknown> {
 }
 
 /** Initial ~/.arc/arc.code-workspace — written only if the file doesn't exist. */
-export function workspaceFile(id: string, hasVault: boolean): string {
+export function workspaceFile(id: string, hasVault: boolean, vaultPath?: string): string {
   const folders = [
     { name: 'home · code & envs (backed up · 100 GB)', path: `/home/${id}/projects` },
     { name: 'work · job I/O & data (no backup · 30-day purge)', path: `/work/${id}` },
-    ...(hasVault ? [{ name: 'vault · archive (backed up · 1 TB)', path: `/vault/research/${id}` }] : []),
+    ...(hasVault ? [{ name: 'vault · archive (backed up · 1 TB)', path: vaultPath ?? `/vault/research/${id}` }] : []),
   ];
   const settings = workspaceSettings(id);
   const body = {
@@ -131,12 +131,15 @@ Host *
 `;
 }
 
-export function proxyScript(login: string, holdJob: string): string {
+export function proxyScript(login: string, holdJob: string, mode: 'forward' | 'relay' = 'forward'): string {
   return `#!/bin/sh
 # Managed by the Arc HPC VS Code extension — ProxyCommand for the compute-node host.
-# Finds the node running your holder job, then tunnels to its sshd through the
-# multiplexed login connection (no second DUO prompt, no netcat needed on Arc).
+# Finds the node running your holder job, then opens a byte stream to its sshd through
+# the multiplexed login connection (no second DUO prompt).
+#   forward: ssh -W (needs port forwarding allowed on the login node)
+#   relay:   a bash /dev/tcp relay run on the login node (works when forwarding is prohibited)
 JOB_NAME="\${ARC_HOLD_JOB:-${holdJob}}"
+MODE="\${ARC_PROXY_MODE:-${mode}}"
 node=$(ssh -o BatchMode=yes ${login} "squeue -u \\$USER --name=$JOB_NAME --states=RUNNING --noheader --format=%N" 2>/dev/null \\
         | head -n1 | tr -d '[:space:]')
 if [ -z "$node" ]; then
@@ -146,6 +149,9 @@ fi
 case "$node" in
   *\\[*) echo "arc: holder job spans multiple nodes ($node); use a 1-node job." >&2; exit 1 ;;
 esac
+if [ "$MODE" = relay ]; then
+  exec ssh -o BatchMode=yes ${login} "bash -c 'exec 3<>/dev/tcp/$node/22; cat <&3 & exec cat >&3'"
+fi
 exec ssh -W "$node:22" ${login}
 `;
 }

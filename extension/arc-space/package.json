@@ -2,7 +2,7 @@
   "name": "arc-space",
   "displayName": "Arc Space — HPC Manager",
   "description": "Guided Remote-SSH setup for UTSA Arc (Login, ControlMaster, compute-node hop), partitions/nodes, your Slurm jobs, tasks, and home/work/vault storage.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "local",
   "license": "MIT",
   "icon": "media/arc-filled.png",
@@ -418,6 +418,18 @@
         "title": "Monitor Job",
         "category": "Arc",
         "icon": "$(pulse)"
+      },
+      {
+        "command": "arc.diagnoseNode",
+        "title": "Diagnose Node Connection (Mac → node)",
+        "category": "Arc",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "arc.findVault",
+        "title": "Find Vault Folder",
+        "category": "Arc",
+        "icon": "$(archive)"
       }
     ],
     "menus": {
@@ -486,6 +498,14 @@
         {
           "command": "arc.signOut",
           "when": "view =~ /^arc\\./ && arc.setup.signedIn"
+        },
+        {
+          "command": "arc.diagnoseNode",
+          "when": "view =~ /^arc\\./"
+        },
+        {
+          "command": "arc.findVault",
+          "when": "view == arc.storage"
         }
       ],
       "view/item/context": [
@@ -752,6 +772,20 @@
           "default": 240,
           "minimum": 5,
           "description": "The node-side sampler stops on its own after this long, even if the panel stays open."
+        },
+        "arc.proxyMode": {
+          "type": "string",
+          "enum": [
+            "forward",
+            "relay"
+          ],
+          "default": "forward",
+          "scope": "application",
+          "enumDescriptions": [
+            "ssh -W through the login node (needs port forwarding allowed)",
+            "bash /dev/tcp relay run on the login node (works when forwarding is prohibited)"
+          ],
+          "description": "How the arc-node proxy reaches the compute node. Set automatically by verification/diagnosis."
         }
       }
     }

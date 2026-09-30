@@ -12,6 +12,7 @@ import {
 } from './templates';
 import { reviewAndApply, planMerge, Baseline } from './merge';
 import { getPartitions } from './slurm';
+import { diagnoseHop, HopResult } from './diagnose';
 
 let ctx: vscode.ExtensionContext;
 export function initSetup(c: vscode.ExtensionContext) { ctx = c; }
@@ -74,7 +75,7 @@ export function writeManagedSshFiles() {
   if (!id) return;
   const keyPath = ctx.globalState.get<string>(S.keyPath);
   writeFileAtomic(expandHome(MANAGED_CONF), managedConf({ id, login: loginHost(), node: nodeHost(), identityFile: keyPath }), 0o600);
-  writeFileAtomic(expandHome(PROXY_SCRIPT), proxyScript(loginHost(), holdName()), 0o700);
+  writeFileAtomic(expandHome(PROXY_SCRIPT), proxyScript(loginHost(), holdName(), cfg().get<'forward' | 'relay'>('proxyMode', 'forward')), 0o700);
 }
 
 export async function configureSsh(): Promise<boolean> {
@@ -195,13 +196,18 @@ export async function prepareRemote(): Promise<boolean> {
     `echo "lfs=$(command -v lfs >/dev/null && echo 1 || echo 0)"`);
   const kv = Object.fromEntries(probe.trim().split('\n').map(l => l.split('=')));
   const notes: string[] = [];
+  const vaultPath = (vscode.workspace.getConfiguration('arc').get<{ label: string; path: string }[]>('storage', [])
+    .find(d => d.label === 'vault')?.path ?? '').replace(/\$\{user\}/g, id);
+  if (kv.vault !== '1' && vaultPath && !vaultPath.endsWith(`/${id}`)) {
+    kv.vault = (await runRemote(`test -d ${q(vaultPath)} && echo 1 || echo 0`)).trim();
+  }
   if (kv.ws === '1') {
     notes.push('~/.arc/arc.code-workspace already exists — left untouched (use "Arc: Review Workspace Settings" inside it).');
   } else {
-    await runRemote('cat > ~/.arc/arc.code-workspace', { stdin: workspaceFile(id, kv.vault === '1') });
+    await runRemote('cat > ~/.arc/arc.code-workspace', { stdin: workspaceFile(id, kv.vault === '1', vaultPath || undefined) });
     notes.push('Created ~/.arc/arc.code-workspace.');
   }
-  if (kv.vault !== '1') notes.push('⚠ /vault/research/<id> not found — vault folder omitted; set arc.storage if it lives elsewhere.');
+  if (kv.vault !== '1') notes.push('⚠ No vault folder found — omitted from the workspace. Run "Arc: Find Vault Folder".');
   if (kv.lfs !== '1') notes.push('⚠ lfs not on PATH — storage view falls back to df.');
   await ctx.globalState.update(S.remotePrepared, id);
   vscode.window.showInformationMessage(`Arc prepared. ${notes.join(' ')}`);
@@ -213,24 +219,111 @@ export async function prepareRemote(): Promise<boolean> {
 
 interface Check { name: string; ok: boolean | undefined; detail: string; }
 
+/** Apply the remedy a hop diagnosis suggests. Returns true if it's worth re-testing. */
+async function remedy(h: HopResult): Promise<boolean> {
+  const key = ctx.globalState.get<string>(S.keyPath) ?? '~/.ssh/id_ed25519_arc';
+  switch (h.fix) {
+    case 'relay':
+      await cfg().update('proxyMode', 'relay', vscode.ConfigurationTarget.Global);
+      writeManagedSshFiles();
+      return true;
+    case 'agent': {
+      const a = await vscode.window.showInformationMessage(
+        `Your key is accepted by ${h.node} but needs its passphrase. Load it into the macOS keychain/agent once so VS Code can use it without prompts?`,
+        'Load key', 'Skip');
+      if (a !== 'Load key') return false;
+      await localTerminal('Arc: ssh-add', `ssh-add --apple-use-keychain ${key} || ssh-add ${key}`);
+      return !!(await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
+        title: 'Arc: enter the key passphrase in the terminal…' },
+        (_p, t) => waitFor(async () => (await spawnP('ssh-add', ['-l'], { timeoutMs: 4000 })).stdout.includes('arc-slurm') ||
+          (await spawnP('ssh-add', ['-T', expandHome(key) + '.pub'], { timeoutMs: 4000 })).code === 0, 120_000, t)));
+    }
+    case 'installKey':
+    case 'keyMissing': {
+      const a = await vscode.window.showInformationMessage('Set up (or re-install) your SSH key for Arc now?', 'Set up key', 'Skip');
+      return a === 'Set up key' ? setupKey() : false;
+    }
+    default: return false;
+  }
+}
+
+async function findVaultCandidates(): Promise<{ defaultOk: boolean; mounted: boolean; candidates: string[] }> {
+  const out = await runRemote(
+    `test -d /vault/research/$USER && echo "default=1" || echo "default=0"; ` +
+    `test -d /vault/research && echo "mounted=1" || echo "mounted=0"; ` +
+    `for d in /vault/$USER /vault/research/$USER; do test -d "$d" && echo "cand=$d"; done; ` +
+    `find /vault/research -mindepth 1 -maxdepth 1 -type d \\( -user "$USER" -o -writable \\) 2>/dev/null | head -n 20 | sed 's/^/cand=/'`,
+    { timeoutMs: 30_000 }).catch(() => '');
+  const lines = out.trim().split('\n');
+  return {
+    defaultOk: lines.includes('default=1'),
+    mounted: lines.includes('mounted=1'),
+    candidates: [...new Set(lines.filter(l => l.startsWith('cand=')).map(l => l.slice(5)))],
+  };
+}
+
+export async function setVaultPath(p: string) {
+  const conf = vscode.workspace.getConfiguration('arc');
+  const cur = conf.inspect<{ label: string; path: string }[]>('storage');
+  const list = (cur?.globalValue ?? cur?.defaultValue ?? []).map(d => (d.label === 'vault' ? { ...d, path: p } : d));
+  if (!list.some(d => d.label === 'vault')) list.push({ label: 'vault', path: p });
+  await conf.update('storage', list, vscode.ConfigurationTarget.Global);
+}
+
+export async function findVault(interactive = true): Promise<Check> {
+  const v = await findVaultCandidates();
+  if (v.defaultOk) return { name: 'Vault directory', ok: true, detail: `/vault/research/${utsaId()}` };
+  if (!v.mounted) return { name: 'Vault directory', ok: false, detail: '/vault/research is not mounted on the login node.' };
+  if (!v.candidates.length) {
+    return { name: 'Vault directory', ok: false, detail:
+      `No folder under /vault/research is owned by or writable for you. Your vault may not be provisioned yet; ` +
+      `request it at https://support.utsa.edu/myportal, then run "Arc: Find Vault Folder".` };
+  }
+  let chosen: string | undefined = v.candidates.length === 1 ? v.candidates[0] : undefined;
+  if (interactive) {
+    const pick = await vscode.window.showQuickPick(v.candidates.map(c => ({ label: c })),
+      { title: 'Arc: which folder is your vault?', placeHolder: 'Folders under /vault/research you own or can write to', ignoreFocusOut: true });
+    chosen = pick?.label;
+  }
+  if (!chosen) return { name: 'Vault directory', ok: undefined, detail: `Found ${v.candidates.join(', ')} — run "Arc: Find Vault Folder" to choose.` };
+  await setVaultPath(chosen);
+  return { name: 'Vault directory', ok: true, detail: `${chosen} (saved to arc.storage; add it to the workspace from Storage → vault → +)` };
+}
+
+function hopChecks(h: HopResult, loginToNodeOk: boolean): Check[] {
+  const c: Check[] = [];
+  if (h.stage === 'resolve') { c.push({ name: 'Proxy finds the job\'s node', ok: false, detail: `${h.cause}\n     ${h.log}` }); return c; }
+  c.push({ name: 'Proxy finds the job\'s node', ok: true, detail: h.node ?? '' });
+  c.push({ name: 'Login node relays a stream to the node',
+    ok: h.forwardOk || h.relayOk ? true : false,
+    detail: h.forwardOk ? 'ssh -W forwarding works' : h.relayOk ? 'forwarding (-W) is blocked; the bash relay works' : h.cause });
+  if (h.stage === 'forward' && !h.relayOk) return c;
+  c.push({ name: `Node accepts this Mac's key (${nodeHost()} → ${h.node})`, ok: h.ok,
+    detail: h.ok ? 'authenticated' : `${h.cause}${h.log ? '\n     ' + h.log.replace(/\n/g, '\n     ') : ''}` });
+  if (!h.ok && loginToNodeOk && h.structural)
+    c.push({ name: 'Conclusion', ok: false, detail: 'Arc lets you SSH between its own nodes, but not from your Mac to a node. VS Code windows on nodes are not possible; use the login window + "Attach Shell to Job".' });
+  return c;
+}
+
 export async function verify(): Promise<boolean> {
   if (!(await ensureSignedIn())) return false;
   const checks: Check[] = [];
   const job = 'arc-verify';
   let id = '';
+  let hop: HopResult | undefined;
   try {
     const parts = await getPartitions();
     const p = ['compute1', 'compute2', 'compute3'].map(n => parts.find(x => x.name === n)).find(x => x && (x.states.get('idle') ?? 0) > 0)
       ?? parts.find(x => x.name === 'compute1') ?? parts[0];
-    id = (await runRemote(`sbatch --parsable -J ${job} -p ${q(p.name)} -t 00:05:00 -N 1 -n 1 -c 1 -o /dev/null --wrap 'sleep 300'`)).trim().split(';')[0];
+    id = (await runRemote(`sbatch --parsable -J ${job} -p ${q(p.name)} -t 00:10:00 -N 1 -n 1 -c 1 -o /dev/null --wrap 'sleep 600'`)).trim().split(';')[0];
 
     const node = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
-      title: `Arc: verifying — waiting for a 5-minute test job on ${p.name} (${id})…` }, async (_pr, tok) => {
+      title: `Arc: verifying — waiting for a short test job on ${p.name} (${id})…` }, async (_pr, tok) => {
       let n = '';
       await waitFor(async () => {
         const [st, nl] = (await runRemote(`squeue -h -j ${id} -o '%T|%N'`)).trim().split('|');
         if (st === 'RUNNING') { n = nl; return true; }
-        return !st;                                          // vanished → stop waiting
+        return !st;
       }, 240_000, tok, 4000);
       return n;
     });
@@ -239,26 +332,34 @@ export async function verify(): Promise<boolean> {
     } else {
       checks.push({ name: 'Test job started', ok: true, detail: `${id} on ${node}` });
       const fromLogin = await runRemote(`ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${node} hostname 2>&1; echo "rc=$?"`).catch(e => errMsg(e));
-      checks.push({ name: 'Login node → compute node SSH', ok: /rc=0\s*$/.test(fromLogin), detail: fromLogin.trim().replace(/\n/g, ' ') });
+      const loginOk = /rc=0\s*$/.test(fromLogin);
+      checks.push({ name: 'Login node → compute node SSH (inside Arc)', ok: loginOk, detail: fromLogin.trim().replace(/\n/g, ' ') });
 
-      const mac = await spawnP('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20', nodeHost(), 'hostname'],
-        { timeoutMs: 40_000, env: { ARC_HOLD_JOB: job } });
-      const macOk = mac.code === 0;
-      checks.push({ name: `Mac → ${nodeHost()} (proxy hop used by Remote-SSH)`, ok: macOk, detail: (mac.stdout || mac.stderr).trim() });
-      await cfg().update('nodeSshAvailable', macOk, vscode.ConfigurationTarget.Global);
+      // Mac → node, link by link, with up to two automatic remedies.
+      const key = ctx.globalState.get<string>(S.keyPath);
+      hop = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Arc: testing the Mac → node hop…' },
+        () => diagnoseHop(job, key));
+      for (let i = 0; i < 2 && !hop.ok && !hop.structural && hop.fix && hop.fix !== 'none'; i++) {
+        if (!(await remedy(hop))) break;
+        hop = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Arc: re-testing the Mac → node hop…' },
+          () => diagnoseHop(job, ctx.globalState.get<string>(S.keyPath)));
+      }
+      checks.push(...hopChecks(hop, loginOk));
+      // Only a structural failure disables "Open on node"; a passphrase that Remote-SSH can prompt for does not.
+      const usable = hop.ok || (!hop.structural && hop.fix === 'agent');
+      await cfg().update('nodeSshAvailable', usable ? true : hop.structural ? false : null, vscode.ConfigurationTarget.Global);
 
       const ov = await runRemote(`srun --jobid=${id} --overlap true 2>&1; echo "rc=$?"`).catch(e => errMsg(e));
       const ovOk = /rc=0\s*$/.test(ov);
-      checks.push({ name: 'srun --overlap (attach shell to job)', ok: ovOk, detail: ovOk ? 'supported' : ov.trim() });
+      checks.push({ name: 'srun --overlap (attach shell / job monitor)', ok: ovOk, detail: ovOk ? 'supported' : ov.trim() });
       await cfg().update('srunOverlap', ovOk, vscode.ConfigurationTarget.Global);
     }
     const misc = await runRemote(
       `lfs quota -q -h -u $USER /work >/dev/null 2>&1 && echo lfs=1 || echo lfs=0; ` +
-      `test -d /vault/research/$USER && echo vault=1 || echo vault=0; ` +
       `echo "gres=$(sinfo -h -p gpu1v100 -o %G 2>/dev/null | head -n1)"`);
     const kv = Object.fromEntries(misc.trim().split('\n').map(l => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
     checks.push({ name: 'lfs quota for users', ok: kv.lfs === '1', detail: kv.lfs === '1' ? 'works' : 'unavailable → df fallback' });
-    checks.push({ name: 'Vault directory', ok: kv.vault === '1', detail: `/vault/research/${utsaId()}` });
+    checks.push(await findVault(true));
     checks.push({ name: 'GPU GRES reported by sinfo (gpu1v100)', ok: undefined, detail: `${kv.gres || '(none)'} — used verbatim for --gres` });
   } catch (e) {
     if (e instanceof NotSignedIn) throw e;
@@ -269,18 +370,52 @@ export async function verify(): Promise<boolean> {
 
   const mark = (c: Check) => (c.ok === undefined ? 'ℹ' : c.ok ? '✅' : '❌');
   const report = checks.map(c => `${mark(c)}  ${c.name}\n     ${c.detail}`).join('\n\n');
-  const nodeOk = checks.find(c => c.name.startsWith('Mac →'))?.ok;
-  const advice = nodeOk === false
-    ? '\n\nCompute-node SSH is not available: "Open on Node" is disabled. Work in the login window and use\n' +
-      '"Attach Shell to Job" (srun --jobid … --pty) to run things on the node, or ask RCSG about node access.'
-    : '';
+  let advice = '';
+  if (hop && !hop.ok) {
+    advice = hop.structural
+      ? '\n\n"Open on node" is disabled. Work in the login window; use "Attach Shell to Job" and the Job Monitor to run and watch work on nodes.'
+      : hop.fix === 'agent'
+        ? '\n\n"Open on node" stays enabled: Remote-SSH will ask for your key passphrase when it connects. Load the key into the agent to skip that prompt.'
+        : '\n\nFix the item above, then run "Arc: Diagnose Node Connection" (no need to redo the whole verification).';
+  }
+  if (cfg().get('proxyMode') === 'relay') advice += '\n\nNote: the proxy now uses the bash relay because the login node blocks SSH forwarding.';
   const doc = await vscode.workspace.openTextDocument({ content: `Arc verification — ${new Date().toLocaleString()}\n\n${report}${advice}\n` });
   await vscode.window.showTextDocument(doc, { preview: true });
   log(report);
-  const passed = checks.every(c => c.ok !== false);
-  if (checks.some(c => c.name.startsWith('Mac →'))) await ctx.globalState.update(S.verified, utsaId());
+  await ctx.globalState.update(S.verified, utsaId());
   await refreshSetupContext();
-  return passed;
+  return checks.every(c => c.ok !== false);
+}
+
+/** Re-test only the Mac → node hop against your running holder job (or a short test job). */
+export async function diagnoseNode() {
+  if (!(await ensureSignedIn())) return;
+  const holder = (await runRemote(`squeue -u $USER --name=${holdName()} --states=RUNNING -h -o %i`)).trim();
+  let job = holdName(), testId = '';
+  if (!holder) {
+    const a = await vscode.window.showInformationMessage('No running holder job. Start a 10-minute test job to diagnose against?', 'Start test job');
+    if (!a) return;
+    job = 'arc-verify';
+    testId = (await runRemote(`sbatch --parsable -J ${job} -p compute1 -t 00:10:00 -N 1 -n 1 -c 1 -o /dev/null --wrap 'sleep 600'`)).trim().split(';')[0];
+    const ok = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true, title: `Arc: waiting for test job ${testId}…` },
+      (_p, t) => waitFor(async () => (await runRemote(`squeue -h -j ${testId} -o %T`)).trim() === 'RUNNING', 240_000, t, 4000));
+    if (!ok) { await runRemote(`scancel ${testId}`).catch(() => undefined); vscode.window.showWarningMessage('Test job did not start in time.'); return; }
+  }
+  try {
+    let hop = await diagnoseHop(job, ctx.globalState.get<string>(S.keyPath));
+    for (let i = 0; i < 2 && !hop.ok && !hop.structural && hop.fix && hop.fix !== 'none'; i++) {
+      if (!(await remedy(hop))) break;
+      hop = await diagnoseHop(job, ctx.globalState.get<string>(S.keyPath));
+    }
+    const usable = hop.ok || (!hop.structural && hop.fix === 'agent');
+    await cfg().update('nodeSshAvailable', usable ? true : hop.structural ? false : null, vscode.ConfigurationTarget.Global);
+    const checks = hopChecks(hop, true);
+    const text = checks.map(c => `${c.ok === undefined ? 'ℹ' : c.ok ? '✅' : '❌'}  ${c.name}\n     ${c.detail}`).join('\n\n');
+    const doc = await vscode.workspace.openTextDocument({ content: `Arc node connection — ${new Date().toLocaleString()}\n\n${text}\n` });
+    await vscode.window.showTextDocument(doc, { preview: true });
+  } finally {
+    if (testId) await runRemote(`scancel ${testId}`).catch(() => undefined);
+  }
 }
 
 // ─────────────── 7. Workspace ───────────────

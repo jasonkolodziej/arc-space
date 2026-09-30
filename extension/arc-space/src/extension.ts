@@ -107,6 +107,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   reg('arc.setup.key', S.setupKey);
   reg('arc.setup.remote', S.prepareRemote);
   reg('arc.setup.verify', S.verify);
+  reg('arc.diagnoseNode', S.diagnoseNode);
+  reg('arc.findVault', async () => { const c = await S.findVault(true); vscode.window.showInformationMessage(`Arc vault: ${c.detail}`); refreshAll(); });
   reg('arc.signIn', async () => { if (await S.signIn()) refreshAll(); });
   reg('arc.signOut', async () => { await S.signOut(); refreshAll(); });
   reg('arc.openWorkspace', () => S.openWorkspace(false));
@@ -149,7 +151,7 @@ export function activate(ctx: vscode.ExtensionContext) {
   let timer = setInterval(poll, period());
   ctx.subscriptions.push({ dispose: () => clearInterval(timer) });
   ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-    if (e.affectsConfiguration('arc.sshLoginHost') || e.affectsConfiguration('arc.sshNodeHost') || e.affectsConfiguration('arc.utsaId') || e.affectsConfiguration('arc.holdJobName')) {
+    if (e.affectsConfiguration('arc.sshLoginHost') || e.affectsConfiguration('arc.sshNodeHost') || e.affectsConfiguration('arc.utsaId') || e.affectsConfiguration('arc.holdJobName') || e.affectsConfiguration('arc.proxyMode')) {
       try { S.writeManagedSshFiles(); } catch (err) { out.appendLine(`ssh files: ${errMsg(err)}`); }
     }
     if (e.affectsConfiguration('arc')) {

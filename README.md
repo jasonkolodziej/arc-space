@@ -1,4 +1,4 @@
-# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.3
+# Arc (UTSA HPC) × VS Code Remote-SSH — Kit v0.3.1
 
 Reference configuration for developing on UTSA **Arc** from VS Code: selecting and holding a compute node, seeing node availability, managing your Slurm jobs, and moving files between the three storage tiers.
 
@@ -174,6 +174,23 @@ A watchdog moves to the next route if no sample arrives within 25 s (e.g. a step
 | Submit | 🚀 in the editor title for `.sbatch/.slurm` · Explorer context · tasks |
 | Storage | **Storage**: purpose, quota/usage, terminal here, add to workspace, `/work` purge scan |
 | Cross-tier moves | Explorer right-click in Arc windows: **Archive to Vault** (from /work), **Stage to /work** (from /home or /vault) |
+
+### Troubleshooting the Mac → node hop (v0.3.1)
+
+**Arc: Diagnose Node Connection** tests the hop link by link against your running `vscode` job, or starts a 10-minute test job if none is running. Each result states which link failed. Fixes are applied only after you confirm them:
+
+| Result | Meaning | Fix |
+|---|---|---|
+| Proxy can't find the node | Signed out, or no running holder job | Sign in, or allocate a node |
+| Forwarding blocked, relay works | Login node sets `AllowTcpForwarding no` | Switches `arc.proxyMode` to `relay` (a bash `/dev/tcp` relay on the login node) and rewrites the proxy |
+| No path to node:22 | Neither forwarding nor relay works | Structural. Use the login window + Attach Shell / Job Monitor |
+| Node accepts key, but needs passphrase | Key is not loaded in ssh-agent | Offers `ssh-add --apple-use-keychain`. "Open on node" stays enabled, since Remote-SSH prompts for the passphrase anyway |
+| Key rejected / no key offered | Public key not in Arc's `authorized_keys` | Re-runs the key step |
+| Node allows only hostbased auth | Arc permits node SSH only from inside the cluster | Structural. "Open on node" is disabled |
+
+Only structural results disable "Open on node".
+
+**Vault location.** The vault may not be named after your ID. UTSA's training shows named folders under `/vault/research`. **Arc: Find Vault Folder** lists folders there that you own or can write to and saves your choice to `arc.storage`. If there are none, your vault may not be provisioned yet; request it through support.utsa.edu/myportal.
 
 ### Remaining caveats
 - `files.watcherExclude` is documented to accept absolute paths. The `/vault/research/**` entry relies on that.
