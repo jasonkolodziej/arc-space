@@ -6,7 +6,7 @@
 // ─────────────── VS Code settings ───────────────
 
 /** Bump when workspaceSettings() changes. Open Arc workspaces are offered a review. */
-export const WS_TEMPLATE_VERSION = 2;
+export const WS_TEMPLATE_VERSION = 3;
 export const USER_TEMPLATE_VERSION = 3;
 
 /** Local User settings (this Mac). */
@@ -24,10 +24,18 @@ export function userSettings(login: string, node: string): Record<string, unknow
   };
 }
 
-/** Workspace settings for an Arc workspace. Only the cache paths need the user ID. */
+/** Workspace settings for an Arc workspace. Only the cache and module-file paths need the user ID. */
 export function workspaceSettings(id: string): Record<string, unknown> {
   const w = `/work/${id}`;
+  const mods = `/home/${id}/.arc/modules`;    // written by the Modules view / Prepare Arc (see modules.ts)
   return {
+    // Lmod: terminals, tasks and Python follow the module collection edited in Arc ▸ Modules.
+    'terminal.integrated.profiles.linux': {
+      'bash · Arc modules': { path: 'bash', args: ['--rcfile', `${mods}/terminal.rc`], icon: 'package' },
+    },
+    'terminal.integrated.defaultProfile.linux': 'bash · Arc modules',
+    'terminal.integrated.automationProfile.linux': { path: 'bash', env: { BASH_ENV: `${mods}/load.sh` } },
+    'python.envFile': `${mods}/vscode.env`,
     // Lustre: keep recursive watchers and full-text search off datasets and archives.
     'files.watcherExclude': {
       '**/data/**': true, '**/datasets/**': true, '**/checkpoints/**': true,

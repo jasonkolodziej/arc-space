@@ -29,7 +29,10 @@ export ARC_CKPT_EVERY=3600          # also checkpoint hourly (insurance against 
 export ARC_CKPT_RESUBMIT=requeue    # requeue | chain | none
 export ARC_CKPT_MAX_RESTARTS=10
 
-module load anaconda3 2>/dev/null || true   # EDIT: your environment
+# EDIT: your modules. In VS Code, "Arc: Insert Modules into Script…" writes these lines for you:
+#   explicit `module load …` lines (reproducible), or `module restore vscode` (follows Arc ▸ Modules).
+module purge
+module restore vscode
 # conda activate myenv
 
 echo "job $SLURM_JOB_ID restart ${SLURM_RESTART_COUNT:-0} on $(hostname) — ckpt dir $CKPT_DIR"

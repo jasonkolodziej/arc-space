@@ -13,6 +13,7 @@ import {
 import { reviewAndApply, planMerge, Baseline } from './merge';
 import { getPartitions } from './slurm';
 import { showReport } from './docs';
+import { writeModuleFiles } from './modules';
 import { diagnoseHop, HopResult, nodeEnvScript, parseNodeEnv, NodeEnv } from './diagnose';
 
 let ctx: vscode.ExtensionContext;
@@ -216,6 +217,8 @@ export async function prepareRemote(): Promise<boolean> {
   if (kv.wsnode === '1') notes.push(`~/.arc/${WS_NODE} already exists — left untouched.`);
   else { await runRemote(`cat > ~/.arc/${WS_NODE}`, { stdin: workspaceFile(id, false, undefined, true) }); notes.push(`Created ~/.arc/${WS_NODE} (compute nodes, no vault).`); }
   await installCkptHelpers(); notes.push('Installed checkpoint helpers in ~/.local/lib/arc.');
+  try { await writeModuleFiles(); notes.push('Wrote ~/.arc/modules (terminals, tasks and Python follow Arc ▸ Modules).'); }
+  catch (e) { notes.push(`⚠ Module files: ${errMsg(e)}`); }
   if (kv.vault !== '1') notes.push('⚠ No vault folder found — omitted from the workspace. Run "Arc: Find Vault Folder".');
   if (kv.lfs !== '1') notes.push('⚠ lfs not on PATH — storage view falls back to df.');
   await ctx.globalState.update(S.remotePrepared, id);

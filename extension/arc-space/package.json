@@ -57,6 +57,10 @@
         {
           "id": "arc.storage",
           "name": "Storage"
+        },
+        {
+          "id": "arc.modules",
+          "name": "Modules"
         }
       ]
     },
@@ -461,6 +465,60 @@
         "title": "Check Node for VS Code Server (fix install errors)",
         "category": "Arc",
         "icon": "$(tools)"
+      },
+      {
+        "command": "arc.modules.add",
+        "title": "Add Module…",
+        "category": "Arc",
+        "icon": "$(add)"
+      },
+      {
+        "command": "arc.modules.search",
+        "title": "Search All Modules (spider)…",
+        "category": "Arc",
+        "icon": "$(search)"
+      },
+      {
+        "command": "arc.modules.terminal",
+        "title": "New Terminal with Modules",
+        "category": "Arc",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "arc.modules.unload",
+        "title": "Unload Module",
+        "category": "Arc",
+        "icon": "$(close)"
+      },
+      {
+        "command": "arc.modules.swap",
+        "title": "Change Module Version…",
+        "category": "Arc",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "arc.modules.help",
+        "title": "Module Help",
+        "category": "Arc",
+        "icon": "$(info)"
+      },
+      {
+        "command": "arc.modules.reset",
+        "title": "Reset Modules to Arc Defaults…",
+        "category": "Arc",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "arc.modules.insert",
+        "title": "Insert Modules into Script…",
+        "category": "Arc",
+        "icon": "$(insert)"
+      },
+      {
+        "command": "arc.modules.refresh",
+        "title": "Refresh Modules",
+        "category": "Arc",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -487,6 +545,22 @@
         },
         {
           "command": "arc.monitorJob",
+          "when": "false"
+        },
+        {
+          "command": "arc.modules.unload",
+          "when": "false"
+        },
+        {
+          "command": "arc.modules.swap",
+          "when": "false"
+        },
+        {
+          "command": "arc.modules.help",
+          "when": "false"
+        },
+        {
+          "command": "arc.modules.refresh",
           "when": "false"
         }
       ],
@@ -546,6 +620,31 @@
         {
           "command": "arc.checkNodeEnv",
           "when": "view =~ /^arc\\./"
+        },
+        {
+          "command": "arc.modules.add",
+          "when": "view == arc.modules",
+          "group": "navigation@0"
+        },
+        {
+          "command": "arc.modules.search",
+          "when": "view == arc.modules",
+          "group": "navigation@1"
+        },
+        {
+          "command": "arc.modules.terminal",
+          "when": "view == arc.modules",
+          "group": "navigation@2"
+        },
+        {
+          "command": "arc.modules.insert",
+          "when": "view == arc.modules",
+          "group": "1_modules@1"
+        },
+        {
+          "command": "arc.modules.reset",
+          "when": "view == arc.modules",
+          "group": "1_modules@2"
         }
       ],
       "view/item/context": [
@@ -638,6 +737,31 @@
           "command": "arc.purgeScan",
           "when": "viewItem == storage:purge",
           "group": "inline@3"
+        },
+        {
+          "command": "arc.modules.swap",
+          "when": "viewItem == module",
+          "group": "inline@1"
+        },
+        {
+          "command": "arc.modules.help",
+          "when": "viewItem == module",
+          "group": "inline@2"
+        },
+        {
+          "command": "arc.modules.unload",
+          "when": "viewItem == module",
+          "group": "inline@3"
+        },
+        {
+          "command": "arc.modules.add",
+          "when": "viewItem == modules:head",
+          "group": "inline@1"
+        },
+        {
+          "command": "arc.modules.terminal",
+          "when": "viewItem == modules:head",
+          "group": "inline@2"
         }
       ],
       "explorer/context": [
@@ -662,6 +786,13 @@
           "command": "arc.submitBatch",
           "when": "resourceScheme == vscode-remote && resourceExtname =~ /^\\.(sbatch|slurm)$/",
           "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "arc.modules.insert",
+          "when": "editorLangId == shellscript",
+          "group": "arc@1"
         }
       ]
     },
@@ -856,6 +987,12 @@
           ],
           "default": "sameWindow",
           "description": "Where \"Start Session\" / \"Open on node\" opens the compute-node workspace."
+        },
+        "arc.moduleCollection": {
+          "type": "string",
+          "default": "vscode",
+          "pattern": "^[\\w.-]+$",
+          "markdownDescription": "Lmod collection the **Modules** view edits (`module save`/`module restore`). New terminals, tasks and `python.envFile` follow it; batch scripts can `module restore` it."
         }
       }
     }
