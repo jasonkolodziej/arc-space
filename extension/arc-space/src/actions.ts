@@ -394,3 +394,107 @@ export async function stageToWork(uri: vscode.Uri) {
 }
 
 export const whereAmI = () => windowHost();
+
+// ─────────────── checkpoint signalling (remote/ckpt, arc_ckpt.py) ───────────────
+
+const CKPT_DIR = '${ARC_CKPT_STATE_DIR:-$HOME/.arc/ckpt}';
+const JOB_ID = /^\d+(_\d+)?$/;
+
+/**
+ * Ask a running training job to checkpoint. USR2 = save and keep going; USR1 = save and
+ * exit (the same signal `#SBATCH --signal=B:USR1@600` sends before the walltime).
+ * `scancel --full` reaches the batch shell and every step, however the trainer was launched.
+ * A trainer started by hand in a terminal on the holder node isn't in a step, so for the
+ * holder (or when the signal fails) a request file is left for the guard to poll (≤15 s).
+ */
+async function sendCheckpoint(j: Job, mode: 'save' | 'stop', noResume = false): Promise<void> {
+  if (!JOB_ID.test(j.id)) throw new Error(`Unexpected job id "${j.id}"`);
+  const sig = mode === 'save' ? 'USR2' : 'USR1';
+  const file = `touch "$d/${j.id}.${mode}"`;
+  await runRemote(
+    `d="${CKPT_DIR}"; mkdir -p "$d"; ${noResume ? `touch "$d/${j.id}.noresume"; ` : ''}` +
+    (j.name === holdName() ? file : `scancel --full --signal=${sig} ${j.id} || ${file}`));
+}
+
+export async function jobCheckpointSave(arg: unknown) {
+  const j = await pickJob(arg, x => x.state === 'RUNNING');
+  if (!j) return;
+  try {
+    await sendCheckpoint(j, 'save');
+    vscode.window.showInformationMessage(`Arc: asked ${j.id} (${j.name}) to checkpoint and keep running.`, 'Status')
+      .then(a => { if (a) void jobCheckpointStatus({ data: j }); });
+  } catch (e) { vscode.window.showErrorMessage(`Checkpoint ${j.id}: ${errMsg(e)}`); }
+}
+
+export async function jobCheckpointStop(arg: unknown) {
+  const j = await pickJob(arg, x => x.state === 'RUNNING');
+  if (!j) return;
+  if (j.name === holdName()) {  // trainer started by hand on your node: nothing to resubmit
+    try { await sendCheckpoint(j, 'stop', true); vscode.window.setStatusBarMessage(`Arc: asked training on ${j.nodeList} to checkpoint and stop`, 6000); }
+    catch (e) { vscode.window.showErrorMessage(`Checkpoint ${j.id}: ${errMsg(e)}`); }
+    return;
+  }
+  const pick = await vscode.window.showQuickPick([
+    { label: '$(debug-restart) Checkpoint, stop, and resume', detail: 'Exit 99 → the job requeues itself and continues from the checkpoint', noResume: false },
+    { label: '$(debug-stop) Checkpoint and stop for good', detail: 'Saves, then exits 0 — no resubmission', noResume: true },
+  ], { placeHolder: `${j.id} (${j.name}) · ${j.left} left` });
+  if (!pick) return;
+  try {
+    await sendCheckpoint(j, 'stop', pick.noResume);
+    vscode.window.setStatusBarMessage(`Arc: ${j.id} will checkpoint and stop`, 6000);
+  } catch (e) { vscode.window.showErrorMessage(`Checkpoint ${j.id}: ${errMsg(e)}`); }
+  refreshAll();
+}
+
+interface CkptStatus {
+  job_id: string; host: string; state: string; reason: string; updated: number;
+  end_time: number | null; restart_count: number;
+  last_save: { time: number; step: unknown; path: string | null } | null;
+}
+
+export async function readCheckpointStatus(id: string): Promise<CkptStatus | undefined> {
+  if (!JOB_ID.test(id)) return undefined;
+  const t = await runRemote(`cat "${CKPT_DIR}/${id}.json" 2>/dev/null || true`);
+  try { return t.trim() ? JSON.parse(t) as CkptStatus : undefined; } catch { return undefined; }
+}
+
+export async function jobCheckpointStatus(arg: unknown) {
+  const j = await pickJob(arg);
+  if (!j) return;
+  const s = await readCheckpointStatus(j.id).catch(() => undefined);
+  if (!s) {
+    vscode.window.showInformationMessage(
+      `No checkpoint status for ${j.id}. Jobs report it when the trainer uses arc_ckpt.Guard (see the checkpointing guide).`);
+    return;
+  }
+  const ago = (t?: number | null) => (t ? `${Math.round((Date.now() / 1000 - t) / 60)} min ago` : 'never');
+  const body = [
+    `job        ${s.job_id} on ${s.host}`,
+    `state      ${s.state}${s.reason ? ` — ${s.reason}` : ''}`,
+    `restarts   ${s.restart_count}`,
+    `time left  ${s.end_time ? `${Math.round((s.end_time - Date.now() / 1000) / 60)} min` : 'unknown'}`,
+    `last save  ${ago(s.last_save?.time)}${s.last_save ? ` · step ${String(s.last_save.step)} · ${s.last_save.path ?? ''}` : ''}`,
+    `updated    ${ago(s.updated)}`,
+  ].join('\n');
+  await showText(`Checkpoint status ${j.id}`, body, `ckpt-${j.id}`);
+}
+
+const warnedCkpt = new Set<string>();
+
+/** Once per job: a running (non-holder) job is within arc.checkpointWarnMinutes of its walltime. */
+export function warnCheckpoint(jobs: Job[], leftMinutes: (l: string) => number) {
+  const mins = cfg().get<number>('checkpointWarnMinutes', 20);
+  if (!mins) return;
+  for (const j of jobs) {
+    if (j.state !== 'RUNNING' || j.name === holdName() || warnedCkpt.has(j.id) || leftMinutes(j.left) >= mins) continue;
+    warnedCkpt.add(j.id);
+    vscode.window.showWarningMessage(
+      `Arc: job ${j.id} (${j.name}) reaches its walltime in ${j.left}. Jobs using --signal + arc_ckpt save on their own; checkpoint now?`,
+      'Checkpoint now', 'Checkpoint & stop…', 'Status')
+      .then(a => {
+        if (a === 'Checkpoint now') void jobCheckpointSave({ data: j });
+        else if (a === 'Checkpoint & stop…') void jobCheckpointStop({ data: j });
+        else if (a === 'Status') void jobCheckpointStatus({ data: j });
+      });
+  }
+}

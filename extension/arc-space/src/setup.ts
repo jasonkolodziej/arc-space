@@ -13,6 +13,7 @@ import {
 import { reviewAndApply, planMerge, Baseline } from './merge';
 import { getPartitions } from './slurm';
 import { showReport } from './docs';
+import { writeModuleFiles } from './modules';
 import { diagnoseHop, HopResult, nodeEnvScript, parseNodeEnv, NodeEnv } from './diagnose';
 
 let ctx: vscode.ExtensionContext;
@@ -187,6 +188,14 @@ export async function signOut() {
 
 // ─────────────── 5. Prepare Arc ───────────────
 
+/** Copy arc_ckpt.py, arc-ckpt.sh and the train.sbatch template (media/ckpt) to ~/.local/lib/arc. Ours, so always overwritten. */
+async function installCkptHelpers(): Promise<void> {
+  await runRemote('mkdir -p ~/.local/lib/arc ~/.arc/ckpt /work/$USER/logs /work/$USER/ckpt');
+  for (const f of ['arc_ckpt.py', 'arc-ckpt.sh', 'train.sbatch']) {
+    await runRemote(`cat > ~/.local/lib/arc/${f}`, { stdin: fs.readFileSync(path.join(ctx.extensionPath, 'media', 'ckpt', f), 'utf8') });
+  }
+}
+
 export async function prepareRemote(): Promise<boolean> {
   if (!(await ensureSignedIn())) return false;
   const id = utsaId();
@@ -207,6 +216,9 @@ export async function prepareRemote(): Promise<boolean> {
   else { await runRemote(`cat > ~/.arc/${WS_LOGIN}`, { stdin: workspaceFile(id, kv.vault === '1', vaultPath || undefined) }); notes.push(`Created ~/.arc/${WS_LOGIN} (login node).`); }
   if (kv.wsnode === '1') notes.push(`~/.arc/${WS_NODE} already exists — left untouched.`);
   else { await runRemote(`cat > ~/.arc/${WS_NODE}`, { stdin: workspaceFile(id, false, undefined, true) }); notes.push(`Created ~/.arc/${WS_NODE} (compute nodes, no vault).`); }
+  await installCkptHelpers(); notes.push('Installed checkpoint helpers in ~/.local/lib/arc.');
+  try { await writeModuleFiles(); notes.push('Wrote ~/.arc/modules (terminals, tasks and Python follow Arc ▸ Modules).'); }
+  catch (e) { notes.push(`⚠ Module files: ${errMsg(e)}`); }
   if (kv.vault !== '1') notes.push('⚠ No vault folder found — omitted from the workspace. Run "Arc: Find Vault Folder".');
   if (kv.lfs !== '1') notes.push('⚠ lfs not on PATH — storage view falls back to df.');
   await ctx.globalState.update(S.remotePrepared, id);

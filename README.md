@@ -174,6 +174,56 @@ A watchdog moves to the next route if no sample arrives within 25 s (e.g. a step
 | Submit | 🚀 in the editor title for `.sbatch/.slurm` · Explorer context · tasks |
 | Storage | **Storage**: purpose, quota/usage, terminal here, add to workspace, `/work` purge scan |
 | Cross-tier moves | Explorer right-click in Arc windows: **Archive to Vault** (from /work), **Stage to /work** (from /home or /vault) |
+| Modules (Lmod) | **Modules** view: add (`module avail`), search everything (`module spider`, loads prerequisites too), change version (`module swap`), help, unload, reset. Terminals, tasks and Python/Jupyter follow it. **Insert Modules into Script…** for batch jobs. |
+| Checkpoint before the walltime | Right-click a running job: **Checkpoint Now**, **Checkpoint & Stop…**, **Checkpoint Status**. A warning appears at `arc.checkpointWarnMinutes`. In a terminal: `arc ckpt save\|stop\|status`, `arc why`. See the [checkpointing guide](remote/ckpt/README.md). |
+
+### Modules (v0.5)
+
+Arc manages software with Lmod ([Module Environments](https://hpcsupport.utsa.edu/foswiki/bin/view/WebDocumentation/ModuleEnvironments)). A shell needs `module load`, but VS Code starts many processes that never see your shell: terminals, tasks, the Python debugger, test runners and Jupyter kernels. The **Modules** view keeps one Lmod collection, `vscode` by default (`arc.moduleCollection`), and makes all of them use it.
+
+| You do | The extension runs | Result |
+|---|---|---|
+| **+ Add Module…** | `module -t avail`, with your collection loaded, so it lists only modules that are compatible right now | `module load X` → `module save vscode` |
+| **Search All Modules…** | `module -t spider`, then `module spider X` | Shows how to load a module hidden behind a compiler/MPI, and offers *Load gnu8/8.3.0 openmpi3/… first, then X* |
+| ⇄ on a module | `module swap old new` | Lmod's own swap, including compiler families (`gnu8` → `intel/oneapi/…`) |
+| ⓘ / click | `module help`, `whatis`, `spider` | Install notes in an editor tab |
+| ✕ | `module unload X` | |
+| **Reset to Arc Defaults…** | `module reset` (or `purge` + `restore system`) | |
+
+If Lmod reports an error (for example a conflict or an unknown module), the collection isn't saved. You see Lmod's message and nothing changes.
+
+**How VS Code follows the collection.** After each change, three files in `~/.arc/modules/` are rewritten:
+- `load.sh` runs `module restore vscode` quietly.
+- `terminal.rc` sources `~/.bashrc`, then `load.sh`.
+- `vscode.env` holds the environment variables the collection changes.
+
+Workspace template v3, offered through the usual **Review** merge, points VS Code at them:
+
+| Setting | Effect |
+|---|---|
+| `terminal.integrated.defaultProfile.linux` = `bash · Arc modules` | New terminals start with your modules |
+| `terminal.integrated.automationProfile.linux` → `BASH_ENV=load.sh` | Shell tasks get them too. `load.sh` unsets `BASH_ENV`, so child shells and `sbatch` don't re-run it. |
+| `python.envFile` → `vscode.env` | Run/debug, the test runner and Jupyter kernels see the module's `PATH`, `LD_LIBRARY_PATH`, `CUDA_HOME` and so on. This replaces the default `${workspaceFolder}/.env`, so untick it in the review if you rely on that file. |
+
+**New Terminal with Modules** works from any window, including local ones over `ssh -t`. Terminal profiles set in a workspace only apply when the workspace is trusted.
+
+**Batch jobs** don't inherit any of this. Use **Insert Modules into Script…** (editor right-click on a shell script), which puts lines after the last `#SBATCH`:
+- **Explicit `module load` lines** pin today's versions. Use these for jobs whose results you'll rerun or share.
+- **`module restore vscode`** follows whatever the collection holds when the job starts.
+
+**Prepare Arc** writes the files, and the view's warning row links to the settings review if this workspace isn't using them yet.
+
+### Checkpoint before the walltime (design)
+
+At the time limit, Slurm sends `SIGTERM` and then `SIGKILL` about 30 s later, which is too soon to save a large model. [`remote/ckpt/`](remote/ckpt/README.md) gives training code an earlier, single signal:
+
+1. `#SBATCH --signal=B:USR1@600` warns 10 min ahead.
+2. `arc-ckpt.sh` forwards the signal to the trainer.
+3. `arc_ckpt.Guard` turns it into `guard.checkpoint_due` / `guard.stopping`.
+4. The trainer saves to `/work` and exits 99.
+5. The job requeues itself and resumes.
+
+You can also trigger a save from VS Code or `arc ckpt`. The same guard covers a trainer started by hand in a terminal on your holder node. **Prepare Arc** installs the helpers to `~/.local/lib/arc/`.
 
 ### Troubleshooting the Mac → node hop (v0.3.1)
 

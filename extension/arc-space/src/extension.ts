@@ -6,16 +6,17 @@
  */
 import * as vscode from 'vscode';
 import { initTransport, errMsg, NotSignedIn, NotConfigured, isSignedIn, utsaId } from './transport';
-import { getJobs, Job } from './slurm';
+import { getJobs, Job, leftMinutes } from './slurm';
 import { Provider, jobItems, partitionItems, storageItems, statusFor } from './views';
 import * as A from './actions';
 import * as S from './setup';
 import { ArcTaskProvider } from './tasks';
 import { MonitorPanel } from './monitor';
 import { registerReports } from './docs';
+import * as M from './modules';
 
 let status: vscode.StatusBarItem;
-let jobsView: Provider, partView: Provider, storageView: Provider;
+let jobsView: Provider, partView: Provider, storageView: Provider, modulesView: Provider;
 let jobsCache: Job[] | undefined;
 let prev = new Map<string, Job>();
 let firstPoll = true;
@@ -48,6 +49,7 @@ async function poll() {
     const jobs = await getJobs();
     jobsCache = jobs;
     notifyTransitions(jobs);
+    A.warnCheckpoint(jobs, leftMinutes);
     await statusFor(status, jobs);
   } catch (e) {
     jobsCache = undefined;
@@ -60,6 +62,7 @@ function refreshAll() {
   void poll();
   partView.refresh();
   storageView.refresh();
+  modulesView.refresh();
   void S.refreshSetupContext();
 }
 
@@ -81,6 +84,8 @@ export function activate(ctx: vscode.ExtensionContext) {
   jobsView = new Provider(jobsRoot);
   partView = new Provider(partitionItems);
   storageView = new Provider(storageItems);
+  modulesView = new Provider(M.moduleItems);
+  M.setModulesView(modulesView);
   A.setRefreshHook(refreshAll);
   A.setMemento(ctx.globalState);
 
@@ -89,6 +94,7 @@ export function activate(ctx: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('arc.jobs', jobsView),
     vscode.window.registerTreeDataProvider('arc.partitions', partView),
     vscode.window.registerTreeDataProvider('arc.storage', storageView),
+    vscode.window.registerTreeDataProvider('arc.modules', modulesView),
     vscode.tasks.registerTaskProvider(ArcTaskProvider.type, new ArcTaskProvider()),
   );
 
@@ -143,6 +149,9 @@ export function activate(ctx: vscode.ExtensionContext) {
   reg('arc.jobRelease', A.jobCmd('Release', id => ['scontrol', ['release', id]], undefined, j => j.state === 'PENDING'));
   reg('arc.jobRequeue', A.jobCmd('Requeue', id => ['scontrol', ['requeue', id]], 'Requeue job', j => j.state === 'RUNNING'));
   reg('arc.cancelAll', A.cancelAll);
+  reg('arc.jobCheckpointSave', A.jobCheckpointSave);
+  reg('arc.jobCheckpointStop', A.jobCheckpointStop);
+  reg('arc.jobCheckpointStatus', A.jobCheckpointStatus);
 
   // storage
   reg('arc.storageTerminal', A.storageTerminal);
@@ -151,6 +160,17 @@ export function activate(ctx: vscode.ExtensionContext) {
   reg('arc.archiveToVault', A.archiveToVault);
   reg('arc.stageToWork', A.stageToWork);
 
+  // modules (Lmod)
+  reg('arc.modules.add', M.addModule);
+  reg('arc.modules.search', M.searchModules);
+  reg('arc.modules.unload', M.unloadModule);
+  reg('arc.modules.swap', M.swapModule);
+  reg('arc.modules.help', M.moduleHelp);
+  reg('arc.modules.reset', M.resetModules);
+  reg('arc.modules.terminal', M.moduleTerminal);
+  reg('arc.modules.insert', M.insertIntoScript);
+  reg('arc.modules.refresh', () => modulesView.refresh());
+
   // polling
   const period = () => Math.max(10, vscode.workspace.getConfiguration('arc').get<number>('refreshSeconds', 30)) * 1000;
   let timer = setInterval(poll, period());
@@ -158,6 +178,9 @@ export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('arc.sshLoginHost') || e.affectsConfiguration('arc.sshNodeHost') || e.affectsConfiguration('arc.utsaId') || e.affectsConfiguration('arc.holdJobName') || e.affectsConfiguration('arc.proxyMode')) {
       try { S.writeManagedSshFiles(); } catch (err) { out.appendLine(`ssh files: ${errMsg(err)}`); }
+    }
+    if (e.affectsConfiguration('arc.moduleCollection')) {
+      void M.writeModuleFiles().catch(err => out.appendLine(`module files: ${errMsg(err)}`));
     }
     if (e.affectsConfiguration('arc')) {
       clearInterval(timer);
