@@ -174,6 +174,19 @@ A watchdog moves to the next route if no sample arrives within 25 s (e.g. a step
 | Submit | 🚀 in the editor title for `.sbatch/.slurm` · Explorer context · tasks |
 | Storage | **Storage**: purpose, quota/usage, terminal here, add to workspace, `/work` purge scan |
 | Cross-tier moves | Explorer right-click in Arc windows: **Archive to Vault** (from /work), **Stage to /work** (from /home or /vault) |
+| Checkpoint before the walltime | Right-click a running job: **Checkpoint Now**, **Checkpoint & Stop…**, **Checkpoint Status**. A warning appears at `arc.checkpointWarnMinutes`. In a terminal: `arc ckpt save\|stop\|status`, `arc why`. See the [checkpointing guide](remote/ckpt/README.md). |
+
+### Checkpoint before the walltime (design)
+
+At the time limit, Slurm sends `SIGTERM` and then `SIGKILL` about 30 s later, which is too soon to save a large model. [`remote/ckpt/`](remote/ckpt/README.md) gives training code an earlier, single signal:
+
+1. `#SBATCH --signal=B:USR1@600` warns 10 min ahead.
+2. `arc-ckpt.sh` forwards the signal to the trainer.
+3. `arc_ckpt.Guard` turns it into `guard.checkpoint_due` / `guard.stopping`.
+4. The trainer saves to `/work` and exits 99.
+5. The job requeues itself and resumes.
+
+You can also trigger a save from VS Code or `arc ckpt`. The same guard covers a trainer started by hand in a terminal on your holder node. **Prepare Arc** installs the helpers to `~/.local/lib/arc/`.
 
 ### Troubleshooting the Mac → node hop (v0.3.1)
 

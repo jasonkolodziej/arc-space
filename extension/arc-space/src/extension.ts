@@ -6,7 +6,7 @@
  */
 import * as vscode from 'vscode';
 import { initTransport, errMsg, NotSignedIn, NotConfigured, isSignedIn, utsaId } from './transport';
-import { getJobs, Job } from './slurm';
+import { getJobs, Job, leftMinutes } from './slurm';
 import { Provider, jobItems, partitionItems, storageItems, statusFor } from './views';
 import * as A from './actions';
 import * as S from './setup';
@@ -48,6 +48,7 @@ async function poll() {
     const jobs = await getJobs();
     jobsCache = jobs;
     notifyTransitions(jobs);
+    A.warnCheckpoint(jobs, leftMinutes);
     await statusFor(status, jobs);
   } catch (e) {
     jobsCache = undefined;
@@ -143,6 +144,9 @@ export function activate(ctx: vscode.ExtensionContext) {
   reg('arc.jobRelease', A.jobCmd('Release', id => ['scontrol', ['release', id]], undefined, j => j.state === 'PENDING'));
   reg('arc.jobRequeue', A.jobCmd('Requeue', id => ['scontrol', ['requeue', id]], 'Requeue job', j => j.state === 'RUNNING'));
   reg('arc.cancelAll', A.cancelAll);
+  reg('arc.jobCheckpointSave', A.jobCheckpointSave);
+  reg('arc.jobCheckpointStop', A.jobCheckpointStop);
+  reg('arc.jobCheckpointStatus', A.jobCheckpointStatus);
 
   // storage
   reg('arc.storageTerminal', A.storageTerminal);

@@ -25,7 +25,8 @@
   "scripts": {
     "compile": "tsc -p .",
     "watch": "tsc -w -p .",
-    "package": "vsce package --no-dependencies --allow-missing-repository"
+    "package": "pnpm run sync-ckpt && vsce package --no-dependencies --allow-missing-repository",
+    "sync-ckpt": "cp ../../remote/ckpt/arc_ckpt.py ../../remote/ckpt/arc-ckpt.sh ../../remote/ckpt/train.sbatch media/ckpt/"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
@@ -386,6 +387,24 @@
         "icon": "$(debug-restart)"
       },
       {
+        "command": "arc.jobCheckpointSave",
+        "title": "Checkpoint Now (keep running)",
+        "category": "Arc",
+        "icon": "$(save)"
+      },
+      {
+        "command": "arc.jobCheckpointStop",
+        "title": "Checkpoint & Stop…",
+        "category": "Arc",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "arc.jobCheckpointStatus",
+        "title": "Checkpoint Status",
+        "category": "Arc",
+        "icon": "$(history)"
+      },
+      {
         "command": "arc.cancelAll",
         "title": "Cancel ALL My Jobs",
         "category": "Arc",
@@ -586,6 +605,21 @@
           "group": "2_control@3"
         },
         {
+          "command": "arc.jobCheckpointSave",
+          "when": "viewItem =~ /^job:running/",
+          "group": "3_checkpoint@1"
+        },
+        {
+          "command": "arc.jobCheckpointStop",
+          "when": "viewItem =~ /^job:running/",
+          "group": "3_checkpoint@2"
+        },
+        {
+          "command": "arc.jobCheckpointStatus",
+          "when": "viewItem =~ /^job:/",
+          "group": "3_checkpoint@3"
+        },
+        {
           "command": "arc.allocateOn",
           "when": "viewItem == partition",
           "group": "inline"
@@ -697,6 +731,12 @@
         "arc.notifyOnJobEnd": {
           "type": "boolean",
           "default": true
+        },
+        "arc.checkpointWarnMinutes": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "description": "Warn once when a running (non-holder) job is this many minutes from its walltime, with Checkpoint now / Checkpoint & stop actions. 0 turns it off."
         },
         "arc.nodeSshAvailable": {
           "type": [

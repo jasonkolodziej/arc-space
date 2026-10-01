@@ -9,3 +9,5 @@
 
 - Can the extension detect and report these exit codes automatically?
 - How should we signal this information to both the user and the system, ensuring proper handling and visibility of job termination reasons? -- primarily for time limit exceeded scenarios on data training jobs
+
+> Working answers (standard Slurm behaviour), the checks to run on Arc, and the open items for RCSG are in [remote/ckpt/README.md § 4](remote/ckpt/README.md#4-exit-codes-and-signals-what-we-know-and-what-still-needs-confirming).

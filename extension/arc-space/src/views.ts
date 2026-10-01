@@ -131,8 +131,11 @@ export async function statusFor(status: vscode.StatusBarItem, jobs: Job[] | unde
     status.tooltip += ' · click for the live monitor';
     if (leftMinutes(holder.left) < 15 && !warnedLowTime) {
       warnedLowTime = true;
-      vscode.window.showWarningMessage(`Arc: your node's job ends in ${holder.left}. Save your work.`, 'Start a new session')
-        .then(a => { if (a) void vscode.commands.executeCommand('arc.startSession'); });
+      vscode.window.showWarningMessage(`Arc: your node's job ends in ${holder.left}. Save your work.`, 'Start a new session', 'Checkpoint training…')
+        .then(a => {
+          if (a === 'Start a new session') void vscode.commands.executeCommand('arc.startSession');
+          else if (a) void vscode.commands.executeCommand('arc.jobCheckpointStop', { data: holder });
+        });
     }
   } else if (w === 'node') {
     status.text = '$(error) Arc: node job ended — start new session'; status.tooltip = 'Your node job ended. Click to allocate a node and reopen this window on it.';

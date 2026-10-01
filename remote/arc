@@ -120,8 +120,77 @@ cmd_stage() {  # copy from home/vault into /work for job I/O
   echo "Staged -> $dest/$(basename "$src")"
 }
 
+# ── checkpoint signalling (see remote/ckpt/README.md) ──
+last_running() {  # newest running job that isn't the VS Code holder
+  squeue -u "$USER" -h -t RUNNING -o "%i %j" | awk -v h="$HOLD" '$2 != h {print $1}' | tail -n1
+}
+ckpt_dir="${ARC_CKPT_STATE_DIR:-$HOME/.arc/ckpt}"
+
+cmd_ckpt() {  # arc ckpt save|stop|status [JOBID] [--no-resume]
+  local sub="${1:-status}"; shift || true
+  local id="" noresume=""
+  for a in "$@"; do case "$a" in --no-resume) noresume=1 ;; *) id="$a" ;; esac; done
+  case "$sub" in
+    save|stop)
+      [ -n "$id" ] || id=$(last_running)
+      [ -n "$id" ] || id=$(holder | awk -F'|' '$2 == "RUNNING" {print $1}')
+      [ -n "$id" ] || die "no running job (pass a JOBID)"
+      mkdir -p "$ckpt_dir"
+      [ "$sub" = stop ] && [ -n "$noresume" ] && touch "$ckpt_dir/$id.noresume"
+      local sig=USR2; [ "$sub" = stop ] && sig=USR1
+      # --full reaches the batch shell *and* every step, however the trainer was launched.
+      # A trainer started by hand on the holder node isn't in a Slurm step: use the request file.
+      if [ "$id" = "$(holder | cut -d'|' -f1)" ]; then
+        touch "$ckpt_dir/$id.$sub"; echo "Left request file $ckpt_dir/$id.$sub (picked up within 15 s)."
+      elif scancel --full --signal="$sig" "$id"; then
+        echo "Sent SIG$sig to job $id ($([ "$sub" = save ] && echo 'save and continue' || echo "save and exit${noresume:+, no resume}"))."
+      else  # e.g. older Slurm without --full: leave a request file the guard polls (≤15 s)
+        touch "$ckpt_dir/$id.$sub"; echo "Signal failed; left request file $ckpt_dir/$id.$sub"
+      fi
+      echo "Watch: arc ckpt status $id   ·   arc log $id"
+      ;;
+    status)
+      local files
+      if [ -n "$id" ]; then files="$ckpt_dir/$id.json"; else files=$(ls -t "$ckpt_dir"/*.json 2>/dev/null | head -n 10); fi
+      [ -n "$files" ] || { echo "No checkpoint status yet (the trainer writes $ckpt_dir/<jobid>.json)."; return; }
+      for f in $files; do
+        [ -f "$f" ] || { echo "$(basename "$f" .json): no status file"; continue; }
+        python3 - "$f" <<'PY'
+import json, sys, time
+d = json.load(open(sys.argv[1])); now = time.time(); ls = d.get("last_save") or {}
+ago = lambda t: f"{int((now - t) // 60)} min ago" if t else "never"
+left = f"{int((d['end_time'] - now) // 60)} min left" if d.get("end_time") else "end time unknown"
+print(f"{d['job_id']:>12}  {d['state']:<18} {left:<16} restart {d.get('restart_count', 0)}  "
+      f"last save {ago(ls.get('time'))} (step {ls.get('step')})  {d.get('reason') or ''}")
+PY
+      done
+      ;;
+    *) die "usage: arc ckpt save|stop|status [JOBID] [--no-resume]" ;;
+  esac
+}
+
+cmd_why() {  # arc why JOBID — how a job ended, in words
+  local id="${1:?usage: arc why JOBID}"
+  sacct -j "$id" -n -P --format=JobID,State,ExitCode,DerivedExitCode,Elapsed,Timelimit | while IFS='|' read -r jid st ec dec el tl; do
+    local code="${ec%%:*}" sig="${ec##*:}" note=""
+    case "$st" in
+      TIMEOUT*)        note="hit the walltime ($el of $tl). Slurm sent SIGTERM, then SIGKILL after KillWait." ;;
+      CANCELLED*)      note="cancelled (scancel, or a step killed when its job ended)." ;;
+      OUT_OF_MEMORY*)  note="out of memory — raise --mem or reduce batch size." ;;
+      NODE_FAIL*)      note="node failed — resume from your last checkpoint." ;;
+      PREEMPTED*)      note="preempted." ;;
+      FAILED*)         note="exited non-zero (exit $code)." ;;
+      COMPLETED*)      note="completed (exit $code)." ;;
+      REQUEUED*)       note="requeued (resumed under the same id)." ;;
+    esac
+    [ "$sig" != 0 ] && note="$note killed by signal $sig ($(kill -l "$sig" 2>/dev/null || echo ?))."
+    [ "$code" = 99 ] && note="$note exit 99 = checkpointed and asked to be resumed."
+    printf '%-16s %-14s %-6s %s\n' "$jid" "$st" "$ec" "$note"
+  done
+}
+
 case "${1:-help}" in
-  partitions|idle|jobs|alloc|node|release|shell|interactive|eff|log|storage|purge|archive|stage)
+  partitions|idle|jobs|alloc|node|release|shell|interactive|eff|log|storage|purge|archive|stage|ckpt|why)
     c="$1"; shift; "cmd_$c" "$@" ;;
-  *) sed -n '2,3p' "$0"; echo "commands: partitions idle jobs alloc node release shell interactive eff log storage purge archive stage" ;;
+  *) sed -n '2,3p' "$0"; echo "commands: partitions idle jobs alloc node release shell interactive eff log storage purge archive stage ckpt why" ;;
 esac
