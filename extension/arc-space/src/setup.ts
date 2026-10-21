@@ -163,15 +163,42 @@ export async function signIn(): Promise<boolean> {
   if (!utsaId() && !(await configureSsh())) return false;
   if (await isSignedIn()) { vscode.window.showInformationMessage('Arc: already signed in.'); await refreshSetupContext(); return true; }
   const h = loginHost();
-  await localTerminal('Arc: sign in (DUO)',
+  const term = await localTerminal('Arc: sign in (DUO)',
     `if ssh -O check ${h} 2>/dev/null; then echo "Already signed in."; ` +
     `else ssh -fN ${h} && echo "Signed in to Arc. You can close this terminal."; fi`);
+
+  // Some networks let Duo through with no visible prompt (trusted network, remembered
+  // device) — we never wait on prompt text, only on the control socket, so that's fine on
+  // its own. But if the ssh command itself finishes (shell integration tells us) before the
+  // socket shows up, that's a real failure (bad password, Duo denial, blocked port), not a
+  // user who simply hasn't answered a prompt yet. Surface that distinctly from a timeout.
+  let shellExit: number | undefined;
+  let exited = false;
+  const exitWatch = new Promise<void>(resolve => {
+    const d = vscode.window.onDidEndTerminalShellExecution(e => {
+      if (e.terminal !== term) return;
+      exited = true; shellExit = e.exitCode; d.dispose(); resolve();
+    });
+  });
+
   const ok = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, cancellable: true,
-    title: 'Arc: answer the password/DUO prompt in the terminal…' },
-    (_p, t) => waitFor(isSignedIn, 180_000, t));
+    title: 'Arc: answer the password/DUO prompt in the terminal (some networks skip it — sign-in just continues)…' },
+    async (_p, t) => {
+      const signedIn = waitFor(isSignedIn, 180_000, t);
+      await Promise.race([signedIn, exitWatch]);
+      return signedIn;
+    });
   await refreshSetupContext();
-  if (ok) vscode.window.showInformationMessage('Arc: signed in. The connection is reused for ~10 h (ControlPersist).');
-  return ok;
+  if (ok) { vscode.window.showInformationMessage('Arc: signed in. The connection is reused for ~10 h (ControlPersist).'); return true; }
+
+  if (!exited) {
+    vscode.window.showWarningMessage('Arc: sign-in timed out. Check the "Arc: sign in (DUO)" terminal — it may be waiting on a prompt that printed no visible text.');
+  } else if (shellExit) {
+    vscode.window.showErrorMessage(`Arc: sign-in failed (ssh exited with code ${shellExit}) — check the "Arc: sign in (DUO)" terminal for the reason.`);
+  } else {
+    vscode.window.showWarningMessage('Arc: ssh reported success but the control socket never showed up — check the "Arc: sign in (DUO)" terminal, then try again.');
+  }
+  return false;
 }
 
 export async function ensureSignedIn(): Promise<boolean> {
